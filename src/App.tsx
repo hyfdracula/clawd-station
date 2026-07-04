@@ -28,10 +28,14 @@ import {
 import { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import clawdWizard from "./assets/clawd-wizard.png";
 import { TerminalDeck } from "./TerminalPane";
+import { EngineBadge, engineLabel } from "./components/EngineBadge";
+import { NewConversationModal } from "./components/NewConversationModal";
 
 type Status = WorkbenchStatus;
 type Attachment = WorkbenchAttachment;
 type Conversation = WorkbenchConversation;
+type Engine = WorkbenchEngine;
+type Sandbox = WorkbenchSandbox;
 
 const defaultAppearance = {
   chatBackground: "#F0EBE0",
@@ -53,7 +57,9 @@ const initialConversations: Conversation[] = [
     status: "local",
     pinned: false,
     attachments: [],
-    messages: []
+    messages: [],
+    engine: "claude",
+    sandbox: "default"
   }
 ];
 
@@ -216,6 +222,8 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("background");
   const [appearance, setAppearance] = useState(loadAppearance);
   const [completedMessageIds, setCompletedMessageIds] = useState<Set<string>>(() => new Set());
+  const [engines, setEngines] = useState<EngineInfo[]>([]);
+  const [showNewConversationModal, setShowNewConversationModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
@@ -339,6 +347,12 @@ export function App() {
     scrollConversationToBottom("smooth");
   }, [activeId, activeConversation?.messages.length, activeConversation?.messages.at(-1)?.body]);
 
+  // Load available engines from main process for the new-conversation modal.
+  useEffect(() => {
+    if (!window.workbench?.listEngines) return;
+    void window.workbench.listEngines().then((items) => setEngines(items || []));
+  }, []);
+
   useEffect(() => {
     const resetDragState = () => {
       dragDepthRef.current = 0;
@@ -451,6 +465,54 @@ export function App() {
     });
     const offDone = window.workbench.onClaudeDone(syncFinal);
     const offError = window.workbench.onClaudeError(syncFinal);
+
+    // Engine (Codex / OpenCode / generic) listeners share the same plumbing as Claude.
+    const offEngineChunk = window.workbench.onEngineChunk
+      ? window.workbench.onEngineChunk(({ conversationId, messageId, chunk }) => {
+          if (!chunk) return;
+          enqueueMessageChunk(conversationId, messageId, chunk);
+        })
+      : () => {};
+    const offEngineStderr = window.workbench.onEngineStderr
+      ? window.workbench.onEngineStderr(({ conversationId, messageId, stderr }) => {
+          setConversations((current) =>
+            current.map((conversation) =>
+              conversation.id === conversationId
+                ? {
+                    ...conversation,
+                    messages: conversation.messages.map((message) =>
+                      message.id === messageId ? { ...message, output: stderr ?? message.output } : message
+                    )
+                  }
+                : conversation
+            )
+          );
+        })
+      : () => {};
+    const offEnginePermission = window.workbench.onEnginePermission
+      ? window.workbench.onEnginePermission((event) => {
+          setPermissionRequests((current) => ({ ...current, [event.messageId]: event }));
+        })
+      : () => {};
+    const offEngineDone = window.workbench.onEngineDone ? window.workbench.onEngineDone(syncFinal) : () => {};
+    const offEngineError = window.workbench.onEngineError ? window.workbench.onEngineError(syncFinal) : () => {};
+    const offEngineSessionId = window.workbench.onEngineSessionId
+      ? window.workbench.onEngineSessionId((event) => {
+          // Persist the captured session id back into the conversation so future
+          // turns can resume the same Codex/OpenCode session.
+          updateConversation(event.conversationId, (conversation) => {
+            if (event.engine === "Codex CLI" && event.sessionId) {
+              return { ...conversation, codexSessionId: event.sessionId };
+            }
+            if (event.engine === "OpenCode" && event.sessionId) {
+              return { ...conversation, opencodeSessionId: event.sessionId };
+            }
+            return conversation;
+          });
+          void persistConversation(event.conversationId, {});
+        })
+      : () => {};
+
     const offOpenDirectory = window.workbench.onOpenDirectory(({ directory }) => {
       void openConversationInDirectory(directory);
     });
@@ -486,6 +548,12 @@ export function App() {
       offCopyMessageContent();
       offDone();
       offError();
+      offEngineChunk();
+      offEngineStderr();
+      offEnginePermission();
+      offEngineDone();
+      offEngineError();
+      offEngineSessionId();
       offOpenDirectory();
       streamTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       streamTimersRef.current.clear();
@@ -509,6 +577,49 @@ export function App() {
     window.setTimeout(() => setToast(null), 2600);
   }
 
+  function openNewConversationModal() {
+    if (!window.workbench) {
+      // No workbench (browser preview) — just create a default Claude session.
+      void createConversation();
+      return;
+    }
+    setShowNewConversationModal(true);
+  }
+
+  async function confirmNewConversation(engine: Engine, sandbox: Sandbox) {
+    setShowNewConversationModal(false);
+    if (window.workbench) {
+      const items = await window.workbench.createConversation({ engine, sandbox });
+      setConversations(items);
+      setActiveId(items[0]?.id ?? "");
+      setDraft("");
+      setComposerFiles([]);
+      return;
+    }
+
+    const next: Conversation = {
+      id: makeId("session"),
+      claudeSessionId: engine === "claude" ? makeId("claude") : undefined,
+      codexSessionId: engine === "codex" ? makeId("codex") : undefined,
+      opencodeSessionId: engine === "opencode" ? makeId("opencode") : undefined,
+      title: "新会话",
+      updatedAt: "刚刚",
+      directory: "~",
+      status: "local",
+      pinned: false,
+      attachments: [],
+      messages: [],
+      engine,
+      sandbox
+    };
+    setConversations((current) => [next, ...current]);
+    setActiveId(next.id);
+    setDraft("");
+    setComposerFiles([]);
+  }
+
+  // Legacy entry point kept for keyboard shortcuts / direct invocations that
+  // don't want to show the picker — creates a default Claude session.
   async function createConversation() {
     if (window.workbench) {
       const items = await window.workbench.createConversation();
@@ -528,7 +639,9 @@ export function App() {
       status: "local",
       pinned: false,
       attachments: [],
-      messages: []
+      messages: [],
+      engine: "claude",
+      sandbox: "default"
     };
     setConversations((current) => [next, ...current]);
     setActiveId(next.id);
@@ -651,20 +764,29 @@ export function App() {
     const body = draft.trim();
     if ((!body && composerFiles.length === 0) || !activeConversation || sending) return;
 
-    if (window.workbench?.sendToClaude) {
+    if (window.workbench?.sendToEngine || window.workbench?.sendToClaude) {
       const files = composerFiles;
       const previousDraft = draft;
       setDraft("");
       setComposerFiles([]);
       if (textAreaRef.current) textAreaRef.current.style.height = "110px";
       setSending(true);
+      const payload = {
+        conversationId: activeConversation.id,
+        prompt: body || "请查看这些附件。",
+        attachments: files
+      };
+      // Route to the right channel based on the conversation's engine. Claude
+      // keeps its existing dedicated channel; Codex / OpenCode go through the
+      // generic engine channel.
+      const engine = activeConversation.engine || "claude";
+      const sender =
+        engine === "claude"
+          ? window.workbench.sendToClaude
+          : window.workbench.sendToEngine || window.workbench.sendToClaude;
       try {
-        const result = await window.workbench.sendToClaude({
-          conversationId: activeConversation.id,
-          prompt: body || "请查看这些附件。",
-          attachments: files
-        });
-        if (!result.ok) throw new Error(result.error || "Claude Code 没有接受这次任务。");
+        const result = await sender(payload);
+        if (!result.ok) throw new Error(result.error || `${engineLabel(engine)} 没有接受这次任务。`);
       } catch (error) {
         setDraft(previousDraft);
         setComposerFiles(files);
@@ -913,7 +1035,7 @@ export function App() {
                 <img className="brand-mark" src={clawdWizard} alt="Clawd Station" />
                 <span className="brand-name">Clawd Station</span>
               </div>
-              <button className="icon-button primary" type="button" onClick={createConversation} aria-label="新建对话">
+              <button className="icon-button primary" type="button" onClick={openNewConversationModal} aria-label="新建对话">
                 <Plus aria-hidden="true" />
               </button>
             </header>
@@ -940,6 +1062,9 @@ export function App() {
                     <button className="session-main" type="button" onClick={() => setActiveId(conversation.id)}>
                       <span className="session-title-row">
                         {conversation.pinned ? <Pin className="pin-mark" aria-label="已置顶" /> : null}
+                        <span className="session-engine-badge">
+                          <EngineBadge engine={conversation.engine} />
+                        </span>
                         {editingId === conversation.id ? (
                           <input
                             className="rename-input"
@@ -1134,7 +1259,17 @@ export function App() {
             <header className="topbar">
               <div className="topbar-title">
                 <div>
-                  <h2>{activeConversation?.title ?? "没有会话"}</h2>
+                  <h2>
+                    {activeConversation?.title ?? "没有会话"}
+                    {activeConversation ? (
+                      <span className="workspace-engine-strip" title={`引擎: ${engineLabel(activeConversation.engine)} · 权限: ${activeConversation.sandbox || "default"}`}>
+                        <EngineBadge engine={activeConversation.engine} size="md" />
+                        <span>{engineLabel(activeConversation.engine)}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{activeConversation.sandbox || "default"}</span>
+                      </span>
+                    ) : null}
+                  </h2>
                   <p>
                     <FolderOpen aria-hidden="true" />
                     {activeConversation?.directory ?? "未选择目录"}
@@ -1233,6 +1368,13 @@ export function App() {
       ) : null}
 
       {toast ? <div className="toast">{toast}</div> : null}
+      {showNewConversationModal && engines.length > 0 ? (
+        <NewConversationModal
+          engines={engines}
+          onConfirm={(engine, sandbox) => void confirmNewConversation(engine, sandbox)}
+          onCancel={() => setShowNewConversationModal(false)}
+        />
+      ) : null}
     </main>
   );
 }

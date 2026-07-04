@@ -14,7 +14,11 @@ function subscribe(channel, callback) {
 
 contextBridge.exposeInMainWorld("workbench", {
   listConversations: () => ipcRenderer.invoke("conversations:list"),
-  createConversation: (directory) => ipcRenderer.invoke("conversations:create", { directory }),
+  createConversation: (opts) => {
+    // Backward compat: accept a string directory OR an options object
+    if (typeof opts === "string") return ipcRenderer.invoke("conversations:create", { directory: opts });
+    return ipcRenderer.invoke("conversations:create", opts || {});
+  },
   updateConversation: (id, patch) => ipcRenderer.invoke("conversations:update", { id, patch }),
   deleteConversation: (id) => ipcRenderer.invoke("conversations:delete", { id }),
   pickFiles: (conversationId) => ipcRenderer.invoke("files:pick", { conversationId }),
@@ -23,6 +27,9 @@ contextBridge.exposeInMainWorld("workbench", {
   pickBackgroundVideo: () => ipcRenderer.invoke("appearance:pick-background-video"),
   sendToClaude: (payload) => ipcRenderer.invoke("claude:send", payload),
   answerClaudePermission: (payload) => ipcRenderer.invoke("claude:permission-answer", payload),
+  sendToEngine: (payload) => ipcRenderer.invoke("engine:send", payload),
+  answerEnginePermission: (payload) => ipcRenderer.invoke("engine:permission-answer", payload),
+  listEngines: () => ipcRenderer.invoke("engines:list"),
   getAppInfo: () => ipcRenderer.invoke("app:info"),
   onConversationsChanged: (callback) => subscribe("conversations:changed", callback),
   onClaudeChunk: (callback) => subscribe("claude:chunk", callback),
@@ -30,6 +37,12 @@ contextBridge.exposeInMainWorld("workbench", {
   onClaudePermission: (callback) => subscribe("claude:permission", callback),
   onClaudeDone: (callback) => subscribe("claude:done", callback),
   onClaudeError: (callback) => subscribe("claude:error", callback),
+  onEngineChunk: (callback) => subscribe("engine:chunk", callback),
+  onEngineStderr: (callback) => subscribe("engine:stderr", callback),
+  onEnginePermission: (callback) => subscribe("engine:permission", callback),
+  onEngineDone: (callback) => subscribe("engine:done", callback),
+  onEngineError: (callback) => subscribe("engine:error", callback),
+  onEngineSessionId: (callback) => subscribe("engine:session-id", callback),
   onSelectMessageContent: (callback) => subscribe("edit:select-message-content", callback),
   onCopyMessageContent: (callback) => subscribe("edit:copy-message-content", callback),
   terminalStart: (opts) => ipcRenderer.invoke("terminal:start", opts),

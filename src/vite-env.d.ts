@@ -2,6 +2,16 @@
 
 type WorkbenchStatus = "local" | "processing" | "synced";
 type WorkbenchRole = "user" | "assistant";
+type WorkbenchEngine = "claude" | "codex" | "opencode";
+type WorkbenchSandbox =
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | "read-only"
+  | "workspace-write"
+  | "danger-full-access"
+  | "ask"
+  | "auto";
 
 interface WorkbenchAttachment {
   id: string;
@@ -20,7 +30,9 @@ interface WorkbenchMessage {
 
 interface WorkbenchConversation {
   id: string;
-  claudeSessionId: string;
+  claudeSessionId?: string;
+  codexSessionId?: string;
+  opencodeSessionId?: string;
   title: string;
   updatedAt: string;
   directory: string;
@@ -28,6 +40,14 @@ interface WorkbenchConversation {
   pinned: boolean;
   messages: WorkbenchMessage[];
   attachments: WorkbenchAttachment[];
+  engine?: WorkbenchEngine;
+  sandbox?: WorkbenchSandbox;
+}
+
+interface CreateConversationOptions {
+  directory?: string;
+  engine?: WorkbenchEngine;
+  sandbox?: WorkbenchSandbox;
 }
 
 interface ClaudeChunkEvent {
@@ -68,6 +88,20 @@ interface PickedBackgroundVideo {
   url: string;
 }
 
+interface EngineInfo {
+  key: WorkbenchEngine;
+  name: string;
+  abbr: string;
+  defaultSandbox: WorkbenchSandbox;
+  sandboxOptions: { value: WorkbenchSandbox; label: string }[];
+}
+
+interface EngineSessionIdEvent {
+  conversationId: string;
+  engine: string;
+  sessionId: string;
+}
+
 interface WorkbenchInfo {
   storeDir: string;
   attachmentRoot: string;
@@ -83,7 +117,7 @@ interface WorkbenchInfo {
 interface Window {
   workbench?: {
     listConversations: () => Promise<WorkbenchConversation[]>;
-    createConversation: (directory?: string) => Promise<WorkbenchConversation[]>;
+    createConversation: (opts?: CreateConversationOptions | string) => Promise<WorkbenchConversation[]>;
     updateConversation: (id: string, patch: Partial<WorkbenchConversation>) => Promise<WorkbenchConversation[]>;
     deleteConversation: (id: string) => Promise<WorkbenchConversation[]>;
     pickFiles: (conversationId: string) => Promise<WorkbenchAttachment[]>;
@@ -99,6 +133,16 @@ interface Window {
       conversationId: string;
       input: string;
     }) => Promise<{ ok: boolean; error?: string }>;
+    sendToEngine: (payload: {
+      conversationId: string;
+      prompt: string;
+      attachments: WorkbenchAttachment[];
+    }) => Promise<{ ok: boolean; error?: string }>;
+    answerEnginePermission: (payload: {
+      conversationId: string;
+      input: string;
+    }) => Promise<{ ok: boolean; error?: string }>;
+    listEngines: () => Promise<EngineInfo[]>;
     getAppInfo: () => Promise<WorkbenchInfo>;
     onConversationsChanged: (callback: (conversations: WorkbenchConversation[]) => void) => () => void;
     onClaudeChunk: (callback: (event: ClaudeChunkEvent) => void) => () => void;
@@ -106,6 +150,12 @@ interface Window {
     onClaudePermission: (callback: (event: ClaudePermissionEvent) => void) => () => void;
     onClaudeDone: (callback: (event: ClaudeChunkEvent) => void) => () => void;
     onClaudeError: (callback: (event: ClaudeChunkEvent) => void) => () => void;
+    onEngineChunk: (callback: (event: ClaudeChunkEvent) => void) => () => void;
+    onEngineStderr: (callback: (event: ClaudeChunkEvent) => void) => () => void;
+    onEnginePermission: (callback: (event: ClaudePermissionEvent) => void) => () => void;
+    onEngineDone: (callback: (event: ClaudeChunkEvent) => void) => () => void;
+    onEngineError: (callback: (event: ClaudeChunkEvent) => void) => () => void;
+    onEngineSessionId: (callback: (event: EngineSessionIdEvent) => void) => () => void;
     onSelectMessageContent: (callback: (event: SelectMessageContentEvent) => void) => () => void;
     onCopyMessageContent: (callback: (event: SelectMessageContentEvent) => void) => () => void;
     terminalStart: (opts: { id: string; cwd?: string; cols?: number; rows?: number; autoRun?: string }) => Promise<{ ok: boolean; error?: string }>;

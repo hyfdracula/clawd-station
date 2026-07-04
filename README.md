@@ -96,6 +96,32 @@ CLAUDE_BIN=/path/to/claude
 
 应用本身不提供 Claude Code，也不绕过 Claude Code 的登录、权限或计费机制。你终端里能用，它才有可能在这里面用。
 
+### 支持的 AI 引擎
+
+每个会话独立选择引擎，配置通过环境变量指定二进制路径。
+
+| 引擎 | 环境变量 | 默认 | JSON 输出 | 附件 |
+|---|---|---|---|---|
+| Claude Code | `CLAUDE_CODE_BIN` / `CLAUDE_BIN` | `claude` | `--output-format stream-json` | 走 prompt 文本 |
+| Codex CLI | `CODEX_BIN` | `codex` | `exec --json` | `--image`（图片）；文本附件追加到 prompt |
+| OpenCode | `OPENCODE_BIN` | `opencode` | `run --format json` | `--file`（任意） |
+
+新建会话时弹出引擎 + 权限模式 picker；侧栏小角标显示每个会话的引擎（`C` / `X` / `O`）。
+
+**Codex 鉴权** 走 `~/.codex/config.toml`（不要在 `.env` 里写 `OPENAI_API_KEY`，会盖掉 Codex 自带的 relay provider）。
+
+**权限 / 沙盒** 由每个会话独立选择：
+
+- Claude: `default` / `acceptEdits` / `bypassPermissions`
+- Codex: `read-only` / `workspace-write` / `danger-full-access`
+- OpenCode: `ask` / `auto`
+
+**会话恢复** 自动捕获每个 CLI 的会话 ID 并复用：
+
+- Claude: `--resume <claudeSessionId>`
+- Codex: `exec resume <codexSessionId>`（thread_id）
+- OpenCode: `-s <opencodeSessionId>`（sessionID）
+
 ### 对话体验
 
 - 用户消息和 Claude Code 回复分开展示
@@ -246,10 +272,20 @@ CLAUDE_BIN=/path/to/claude
 
 ### Mock 模式
 
-用于本地测试 UI，不真实调用 Claude Code：
+用于本地测试 UI，不真实调用 CLI。每个引擎独立开关：
 
 ```bash
+# 只 mock Claude
 CLAUDE_TO_CODE_MOCK=1 npm run electron
+
+# 只 mock Codex
+CLAWDS_MOCK_CODEX=1 npm run electron
+
+# 只 mock OpenCode
+CLAWDS_MOCK_OPENCODE=1 npm run electron
+
+# 三个全 mock
+CLAWDS_MOCK_ALL=1 npm run electron
 ```
 
 旧变量仍然兼容：
@@ -257,6 +293,8 @@ CLAUDE_TO_CODE_MOCK=1 npm run electron
 ```bash
 CLAUDE_WORKBENCH_MOCK=1 npm run electron
 ```
+
+Mock 模式下，Codex 会按真实 `exec --json` 事件格式吐 `item.completed.agent_message` 块；OpenCode 会按 `run --format json` 吐带 `<think>` 块的 `text` 事件（自动剥离）。适合没装对应 CLI 的机器演示或 CI 跑端到端。
 
 ### Smoke 测试
 

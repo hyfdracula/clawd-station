@@ -4,6 +4,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { normalizeTerminalAnsiForDisplay } = require("./terminal-ansi.cjs");
+const engines = require("./engines.cjs");
+const { ENGINES, getEngine } = engines;
 
 let pty = null;
 try {
@@ -107,6 +109,9 @@ function resolveLoginShell() {
 const claudeCommandOverride = process.env.CLAUDE_CODE_BIN || process.env.CLAUDE_BIN || "";
 const claudeCommandLabel = claudeCommandOverride || "claude (via login shell)";
 const mockClaude = process.env.CLAUDE_TO_CODE_MOCK === "1" || process.env.CLAUDE_WORKBENCH_MOCK === "1";
+const mockCodex = process.env.CLAWDS_MOCK_CODEX === "1";
+const mockOpencode = process.env.CLAWDS_MOCK_OPENCODE === "1";
+const mockAll = process.env.CLAWDS_MOCK_ALL === "1";
 const smokeMode = process.env.CLAUDE_TO_CODE_SMOKE === "1" || process.env.CLAUDE_WORKBENCH_SMOKE === "1";
 
 
@@ -118,6 +123,7 @@ let sessionRoot = "";
 let appearanceRoot = "";
 let conversations = [];
 const activeClaudeRuns = new Map();
+const activeEngineRuns = new Map();
 
 function createWindow() {
   const isMac = process.platform === "darwin";
@@ -289,15 +295,28 @@ function ensureStorage() {
   fs.mkdirSync(appearanceRoot, { recursive: true });
 }
 
+function defaultSandboxFor(engine) {
+  if (engine === "codex") return "workspace-write";
+  if (engine === "opencode") return "ask";
+  return "default";
+}
+
 function readConversations() {
   try {
     conversations = JSON.parse(fs.readFileSync(dataFile, "utf8"));
     if (!Array.isArray(conversations)) conversations = [];
-    conversations = conversations.map((conversation) => ({
-      ...conversation,
-      title: conversation.title === "新的 Claude Code 会话" ? "新会话" : conversation.title,
-      directory: conversation.directory === "/" ? defaultDirectory() : conversation.directory || defaultDirectory()
-    }));
+    conversations = conversations.map((conversation) => {
+      const engine = conversation.engine === "codex" || conversation.engine === "opencode"
+        ? conversation.engine
+        : "claude";
+      return {
+        ...conversation,
+        engine,
+        sandbox: conversation.sandbox || defaultSandboxFor(engine),
+        title: conversation.title === "新的 Claude Code 会话" ? "新会话" : conversation.title,
+        directory: conversation.directory === "/" ? defaultDirectory() : conversation.directory || defaultDirectory()
+      };
+    });
   } catch {
     conversations = [];
   }
@@ -313,7 +332,9 @@ function readConversations() {
         status: "local",
         pinned: false,
         messages: [],
-        attachments: []
+        attachments: [],
+        engine: "claude",
+        sandbox: "default"
       }
     ];
     writeConversations();
@@ -598,6 +619,139 @@ function runMockClaude({ conversationId, prompt, attachments }) {
   });
 }
 
+// Mock Codex — emits the same JSONL event shape that the real CLI produces,
+// then runs them through the real Codex parser. This both drives the UI and
+// proves the parser handles a realistic event stream.
+function runMockCodex({ conversationId, prompt, attachments }) {
+  const conversation = findConversation(conversationId);
+  if (!conversation) throw new Error("Conversation not found");
+
+  const messageId = makeId("msg");
+  const startedAt = nowLabel();
+  const fullPrompt = normalizePrompt(prompt, attachments);
+  const mockThreadId = "mock-thread-" + crypto.randomUUID();
+
+  updateConversation(conversationId, (current) => ({
+    ...current,
+    updatedAt: startedAt,
+    status: "processing",
+    attachments: [...current.attachments, ...attachments],
+    messages: [
+      ...current.messages,
+      { id: makeId("msg"), role: "user", body: fullPrompt, meta: `你 · ${startedAt}` },
+      { id: messageId, role: "assistant", body: "", meta: "Codex CLI · 处理中 (mock)" }
+    ]
+  }));
+  sendToRenderer("conversations:changed", conversations);
+
+  // Sequence of fake Codex JSONL events. Parsed by the real extractCodexText.
+  const events = [
+    JSON.stringify({ type: "thread.started", thread_id: mockThreadId }),
+    JSON.stringify({ type: "turn.started" }),
+    JSON.stringify({ type: "item.completed", item: { id: "i1", type: "agent_message", text: "收到。" } }),
+    JSON.stringify({ type: "item.completed", item: { id: "i2", type: "agent_message", text: "这是 mock 模式下的 Codex 假回复，" } }),
+    JSON.stringify({ type: "item.completed", item: { id: "i3", type: "agent_message", text: "用来在没有 codex CLI 的机器上演示流式输出。" } }),
+    JSON.stringify({ type: "turn.completed", usage: { input_tokens: 0, output_tokens: 0 } })
+  ];
+
+  const parseEvent = ENGINES.codex.parseEvent;
+  let i = 0;
+
+  const emit = () => {
+    if (i >= events.length) {
+      updateConversation(conversationId, (current) => ({
+        ...current,
+        status: "synced",
+        updatedAt: nowLabel(),
+        codexSessionId: mockThreadId,
+        messages: current.messages.map((m) =>
+          m.id === messageId ? { ...m, meta: "Codex CLI · 已整理 (mock)", output: "mock run complete" } : m
+        )
+      }));
+      sendToRenderer("engine:done", { conversationId, messageId, code: 0, conversations });
+      return;
+    }
+    const line = events[i++];
+    const chunk = parseEvent(line);
+    if (chunk && chunk.trim()) {
+      updateConversation(conversationId, (current) => ({
+        ...current,
+        messages: current.messages.map((m) =>
+          m.id === messageId ? { ...m, body: `${m.body}${chunk}` } : m
+        )
+      }));
+      sendToRenderer("engine:chunk", { conversationId, messageId, chunk });
+    }
+    setTimeout(emit, 180 + Math.floor(Math.random() * 120));
+  };
+  setTimeout(emit, 80);
+}
+
+// Mock OpenCode — emits fake JSONL with a <think> block to exercise stripping.
+function runMockOpencode({ conversationId, prompt, attachments }) {
+  const conversation = findConversation(conversationId);
+  if (!conversation) throw new Error("Conversation not found");
+
+  const messageId = makeId("msg");
+  const startedAt = nowLabel();
+  const fullPrompt = normalizePrompt(prompt, attachments);
+  const mockSessionId = "mock-ses-" + crypto.randomUUID();
+
+  updateConversation(conversationId, (current) => ({
+    ...current,
+    updatedAt: startedAt,
+    status: "processing",
+    attachments: [...current.attachments, ...attachments],
+    messages: [
+      ...current.messages,
+      { id: makeId("msg"), role: "user", body: fullPrompt, meta: `你 · ${startedAt}` },
+      { id: messageId, role: "assistant", body: "", meta: "OpenCode · 处理中 (mock)" }
+    ]
+  }));
+  sendToRenderer("conversations:changed", conversations);
+
+  const events = [
+    JSON.stringify({ type: "step_start", sessionID: mockSessionId }),
+    JSON.stringify({ type: "text", part: { type: "text", text: "Hi 神~ " } }),
+    JSON.stringify({ type: "text", part: { type: "text", text: "这是 mock 模式跑的 opencode 假回复，\n\n" } }),
+    // <think> block intentionally present — parser must strip it
+    JSON.stringify({ type: "text", part: { type: "text", text: "<think>让我想想怎么回比较有意思</think>你应该只看到这一句。" } }),
+    JSON.stringify({ type: "step_finish", part: { type: "step-finish", tokens: { total: 0, input: 0, output: 0 } } })
+  ];
+
+  const parseEvent = ENGINES.opencode.parseEvent;
+  let i = 0;
+
+  const emit = () => {
+    if (i >= events.length) {
+      updateConversation(conversationId, (current) => ({
+        ...current,
+        status: "synced",
+        updatedAt: nowLabel(),
+        opencodeSessionId: mockSessionId,
+        messages: current.messages.map((m) =>
+          m.id === messageId ? { ...m, meta: "OpenCode · 已整理 (mock)", output: "mock run complete" } : m
+        )
+      }));
+      sendToRenderer("engine:done", { conversationId, messageId, code: 0, conversations });
+      return;
+    }
+    const line = events[i++];
+    const chunk = parseEvent(line);
+    if (chunk && chunk.trim()) {
+      updateConversation(conversationId, (current) => ({
+        ...current,
+        messages: current.messages.map((m) =>
+          m.id === messageId ? { ...m, body: `${m.body}${chunk}` } : m
+        )
+      }));
+      sendToRenderer("engine:chunk", { conversationId, messageId, chunk });
+    }
+    setTimeout(emit, 180 + Math.floor(Math.random() * 120));
+  };
+  setTimeout(emit, 80);
+}
+
 function runClaude({ conversationId, prompt, attachments }) {
   const conversation = findConversation(conversationId);
   if (!conversation) throw new Error("Conversation not found");
@@ -762,6 +916,189 @@ function runClaude({ conversationId, prompt, attachments }) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Engine dispatch (Codex / OpenCode)
+// Claude keeps its existing runClaude pipeline (it owns interactive permission
+// prompts + stream-json parsing). Codex/OpenCode go through a shared generic
+// spawn helper that handles their --json / --format json event streams.
+// ---------------------------------------------------------------------------
+
+function spawnGenericChild({ engine, binary, args, cwd, conversationId, messageId }) {
+  const child = spawn(binary, args, {
+    cwd,
+    env: { ...process.env, FORCE_COLOR: "0" },
+    shell: false,
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+
+  let stdoutBuffer = "";
+  let stderrBuffer = "";
+  let capturedSessionId = "";
+  const parseEvent = engine.parseEvent;
+  const extractSessionIdFromLine = engine.extractSessionIdFromLine;
+
+  child.stdout.on("data", (buffer) => {
+    stdoutBuffer += buffer.toString("utf8");
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      // Capture session ID from event stream (Codex thread.started, OpenCode sessionID)
+      if (extractSessionIdFromLine && !capturedSessionId) {
+        const sid = extractSessionIdFromLine(line);
+        if (sid) {
+          capturedSessionId = sid;
+          updateConversation(conversationId, (current) => engine.saveSessionId(current, sid));
+          sendToRenderer("engine:session-id", {
+            conversationId,
+            engine: engine.name,
+            sessionId: sid
+          });
+        }
+      }
+      if (!parseEvent) continue;
+      const chunk = parseEvent(line);
+      if (!chunk || !chunk.trim()) continue;
+      updateConversation(conversationId, (current) => ({
+        ...current,
+        messages: current.messages.map((m) =>
+          m.id === messageId ? { ...m, body: `${m.body}${chunk}` } : m
+        )
+      }));
+      sendToRenderer("engine:chunk", { conversationId, messageId, chunk });
+    }
+  });
+
+  child.stderr.on("data", (buffer) => {
+    stderrBuffer += buffer.toString("utf8");
+    const cleanStderr = cleanRunnerOutput(stderrBuffer);
+    if (!cleanStderr) return;
+    updateConversation(conversationId, (current) => ({
+      ...current,
+      messages: current.messages.map((m) =>
+        m.id === messageId ? { ...m, output: cleanStderr.slice(-4000) } : m
+      )
+    }));
+    sendToRenderer("engine:stderr", { conversationId, messageId, stderr: cleanStderr.slice(-4000) });
+  });
+
+  child.on("error", (error) => {
+    activeEngineRuns.delete(conversationId);
+    let finalMessage = null;
+    updateConversation(conversationId, (current) => ({
+      ...current,
+      status: "local",
+      messages: current.messages.map((m) => {
+        if (m.id !== messageId) return m;
+        finalMessage = {
+          ...m,
+          body: `没有成功启动 ${engine.name}。请确认 ${binary} 命令可用。`,
+          meta: `${engine.name} · 启动失败`,
+          output: error.message
+        };
+        return finalMessage;
+      })
+    }));
+    sendToRenderer("engine:error", { conversationId, messageId, error: error.message, finalMessage });
+  });
+
+  child.on("close", (code) => {
+    activeEngineRuns.delete(conversationId);
+    const cleanStderr = cleanRunnerOutput(stderrBuffer);
+    const status = code === 0 ? "synced" : "local";
+    let finalMessage = null;
+    updateConversation(conversationId, (current) => ({
+      ...current,
+      status,
+      updatedAt: nowLabel(),
+      messages: current.messages.map((m) => {
+        if (m.id !== messageId) return m;
+        if (code === 0) {
+          finalMessage = {
+            ...m,
+            meta: `${engine.name} · 已整理`,
+            output: cleanStderr || m.output || "run complete"
+          };
+          return finalMessage;
+        }
+        finalMessage = {
+          ...m,
+          meta: `${engine.name} · 执行失败`,
+          body: m.body || `${engine.name} 没有返回可整理的文本。`,
+          output: cleanStderr || `${binary} exited with code ${code}`
+        };
+        return finalMessage;
+      })
+    }));
+    sendToRenderer(code === 0 ? "engine:done" : "engine:error", {
+      conversationId,
+      messageId,
+      code,
+      finalMessage
+    });
+  });
+
+  return child;
+}
+
+function runGenericEngine({ engine, conversationId, prompt, attachments }) {
+  const conversation = findConversation(conversationId);
+  if (!conversation) throw new Error("Conversation not found");
+
+  const messageId = makeId("msg");
+  const startedAt = nowLabel();
+  const fullPrompt = normalizePrompt(prompt, attachments);
+  const cwd = resolveCwd(conversation.directory);
+  const binary = engine.resolveBinary();
+  const args = engine.buildArgs({
+    prompt: fullPrompt,
+    cwd,
+    sandbox: conversation.sandbox || engine.defaultSandbox,
+    sessionId: engine.getSessionId(conversation),
+    attachments
+  });
+
+  updateConversation(conversationId, (current) => ({
+    ...current,
+    updatedAt: startedAt,
+    status: "processing",
+    attachments: [...current.attachments, ...attachments],
+    messages: [
+      ...current.messages,
+      { id: makeId("msg"), role: "user", body: fullPrompt, meta: `你 · ${startedAt}` },
+      { id: messageId, role: "assistant", body: "", meta: `${engine.name} · 处理中` }
+    ]
+  }));
+  sendToRenderer("conversations:changed", conversations);
+
+  const child = spawnGenericChild({ engine, binary, args, cwd, conversationId, messageId });
+  activeEngineRuns.set(conversationId, { child, messageId, awaitingPermission: false, engine: engine.name });
+}
+
+function runEngine({ conversationId, prompt, attachments }) {
+  const conversation = findConversation(conversationId);
+  if (!conversation) throw new Error("Conversation not found");
+  const engine = getEngine(conversation.engine || "claude");
+
+  // Mock branch — run without spawning the real CLI. Useful for demos and CI.
+  if (engine === ENGINES.claude && mockClaude) {
+    return runMockClaude({ conversationId, prompt, attachments });
+  }
+  if (engine === ENGINES.codex && (mockCodex || mockAll)) {
+    return runMockCodex({ conversationId, prompt, attachments });
+  }
+  if (engine === ENGINES.opencode && (mockOpencode || mockAll)) {
+    return runMockOpencode({ conversationId, prompt, attachments });
+  }
+
+  // Claude keeps its existing pipeline (interactive permission prompts + stream-json)
+  if (engine === ENGINES.claude) {
+    return runClaude({ conversationId, prompt, attachments });
+  }
+  // Codex / OpenCode share the generic pipeline
+  return runGenericEngine({ engine, conversationId, prompt, attachments });
+}
+
 function checkClaudeConnection() {
   if (mockClaude) {
     return { connected: true, detail: "Mock Claude 已启用" };
@@ -822,18 +1159,25 @@ app.on("window-all-closed", () => {
 ipcMain.handle("conversations:list", async () => conversations);
 
 ipcMain.handle("conversations:create", async (_event, arg) => {
-  const requestedDir = arg && typeof arg.directory === "string" && arg.directory ? arg.directory : "";
+  const opts = arg && typeof arg === "object" ? arg : {};
+  const requestedDir = typeof opts.directory === "string" && opts.directory ? opts.directory : "";
   const directory = requestedDir ? resolveCwd(requestedDir) : defaultDirectory();
+  const engine = opts.engine === "codex" || opts.engine === "opencode" ? opts.engine : "claude";
+  const sandbox = typeof opts.sandbox === "string" && opts.sandbox ? opts.sandbox : defaultSandboxFor(engine);
   const conversation = {
     id: makeId("session"),
     claudeSessionId: crypto.randomUUID(),
+    codexSessionId: engine === "codex" ? crypto.randomUUID() : undefined,
+    opencodeSessionId: engine === "opencode" ? crypto.randomUUID() : undefined,
     title: requestedDir ? path.basename(directory) || "新会话" : "新会话",
     updatedAt: "刚刚",
     directory,
     status: "local",
     pinned: false,
     messages: [],
-    attachments: []
+    attachments: [],
+    engine,
+    sandbox
   };
   conversations = [conversation, ...conversations];
   writeConversations();
@@ -910,6 +1254,38 @@ ipcMain.handle("claude:permission-answer", async (_event, { conversationId, inpu
   run.child.stdin.write(input || "\n");
   return { ok: true };
 });
+
+// Generic engine send — routes by conversation.engine.
+// Claude keeps using the legacy claude:send channel above for now; once the
+// renderer is migrated (Phase 3), this becomes the single entry point.
+ipcMain.handle("engine:send", async (_event, payload) => {
+  try {
+    runEngine(payload);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "引擎发送失败。" };
+  }
+});
+
+ipcMain.handle("engine:permission-answer", async (_event, { conversationId, input }) => {
+  const run = activeEngineRuns.get(conversationId);
+  if (!run || run.child.killed || !run.child.stdin?.writable) {
+    return { ok: false, error: "当前没有等待输入的引擎进程。" };
+  }
+  run.awaitingPermission = false;
+  run.child.stdin.write(input || "\n");
+  return { ok: true };
+});
+
+ipcMain.handle("engines:list", async () =>
+  Object.entries(ENGINES).map(([key, engine]) => ({
+    key,
+    name: engine.name,
+    abbr: engine.abbr,
+    defaultSandbox: engine.defaultSandbox,
+    sandboxOptions: engines.sandboxOptionsFor(key)
+  }))
+);
 
 ipcMain.handle("app:info", async () => ({
   storeDir,

@@ -17,8 +17,9 @@
     "desktop": "npm run build && NODE_ENV=production electron .",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/*.test.cjs",
     "postinstall": "patch-package && electron-builder install-app-deps",
-    "package:win": "npm run build && electron-builder --win nsis portable",
+    "package:win": "npm run build && electron-builder --win nsis",
     "package:mac": "npm run build && electron-builder --mac dmg zip"
   },
   "dependencies": {
