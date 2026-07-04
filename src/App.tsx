@@ -11,6 +11,7 @@ import {
   Image as ImageIcon,
   LoaderCircle,
   Loader2,
+  Minus,
   Paperclip,
   PencilLine,
   Pin,
@@ -20,6 +21,7 @@ import {
   Search,
   Send,
   Settings,
+  Square,
   Trash2,
   X
 } from "lucide-react";
@@ -444,6 +446,9 @@ export function App() {
     const offSelectMessageContent = window.workbench.onSelectMessageContent(({ x, y }) => {
       selectMessageContentAt(x, y);
     });
+    const offCopyMessageContent = window.workbench.onCopyMessageContent(({ x, y }) => {
+      void copyMessageContentAt(x, y);
+    });
     const offDone = window.workbench.onClaudeDone(syncFinal);
     const offError = window.workbench.onClaudeError(syncFinal);
     const offOpenDirectory = window.workbench.onOpenDirectory(({ directory }) => {
@@ -452,6 +457,25 @@ export function App() {
 
     window.workbench.notifyReady();
 
+    // Global keyboard handler: only copies selected text from non-editable
+    // areas (chat messages). Cut / paste are handled by xterm's own
+    // attachCustomKeyEventHandler and the textarea/input default behavior.
+    const handleKeydown = (event: KeyboardEvent) => {
+      const isLetter = event.key.length === 1;
+      const isCopy = (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && isLetter && event.key.toLowerCase() === "c";
+      if (!isCopy) return;
+      const active = document.activeElement as HTMLElement | null;
+      const tag = active?.tagName ?? "";
+      const editable = !!active && (tag === "INPUT" || tag === "TEXTAREA" || active.isContentEditable);
+      if (editable) return;
+      const selection = window.getSelection();
+      const text = selection ? selection.toString() : "";
+      if (!text || !window.workbench) return;
+      event.preventDefault();
+      void window.workbench.clipboardWriteText(text);
+    };
+    window.addEventListener("keydown", handleKeydown as unknown as EventListener);
+
     return () => {
       mounted = false;
       offChanged();
@@ -459,12 +483,14 @@ export function App() {
       offStderr();
       offPermission();
       offSelectMessageContent();
+      offCopyMessageContent();
       offDone();
       offError();
       offOpenDirectory();
       streamTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       streamTimersRef.current.clear();
       streamQueuesRef.current.clear();
+      window.removeEventListener("keydown", handleKeydown as unknown as EventListener);
     };
   }, []);
 
@@ -731,6 +757,30 @@ export function App() {
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
+  }
+
+  async function copyMessageContentAt(x: number, y: number) {
+    const target = document.elementFromPoint(x, y);
+    const message = target?.closest(".message-content");
+    if (!message) return;
+
+    const contentNodes = Array.from(message.querySelectorAll(".message-body, pre")).filter((node) =>
+      node.textContent?.trim()
+    );
+    if (contentNodes.length === 0) return;
+
+    const text = contentNodes.map((node) => node.textContent ?? "").join("\n\n");
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback: select the text so the user can Ctrl+C
+      const range = document.createRange();
+      range.setStartBefore(contentNodes[0]);
+      range.setEndAfter(contentNodes[contentNodes.length - 1]);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
   }
 
   async function answerPermission(request: ClaudePermissionEvent, choice: ClaudePermissionChoice) {

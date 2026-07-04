@@ -107,6 +107,7 @@ interface Window {
     onClaudeDone: (callback: (event: ClaudeChunkEvent) => void) => () => void;
     onClaudeError: (callback: (event: ClaudeChunkEvent) => void) => () => void;
     onSelectMessageContent: (callback: (event: SelectMessageContentEvent) => void) => () => void;
+    onCopyMessageContent: (callback: (event: SelectMessageContentEvent) => void) => () => void;
     terminalStart: (opts: { id: string; cwd?: string; cols?: number; rows?: number; autoRun?: string }) => Promise<{ ok: boolean; error?: string }>;
     terminalWrite: (id: string, data: string) => void;
     terminalResize: (id: string, cols: number, rows: number) => void;
@@ -115,5 +116,10 @@ interface Window {
     onTerminalExit: (callback: (event: { id: string; exitCode: number }) => void) => () => void;
     notifyReady: () => void;
     onOpenDirectory: (callback: (event: { directory: string }) => void) => () => void;
+    minimizeWindow: () => Promise<{ ok: boolean }>;
+    toggleMaximize: () => Promise<{ ok: boolean; maximized: boolean }>;
+    closeWindow: () => Promise<{ ok: boolean }>;
+    clipboardWriteText: (text: string) => Promise<{ ok: boolean; error?: string }>;
+    clipboardReadText: () => Promise<{ ok: boolean; text?: string; error?: string }>;
   };
 }

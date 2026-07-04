@@ -1,0 +1,54 @@
+appId: com.clawdstation.app
+productName: Clawd Station
+copyright: Copyright (c) 2026 Clawd Station
+directories:
+  output: dist
+  buildResources: build
+files:
+  - electron/**/*
+  - dist/**/*
+  - package.json
+  - "!**/*.map"
+  - "!**/.DS_Store"
+asar: true
+extraMetadata:
+  main: electron/main.cjs
+
+win:
+  icon: build/icon-wizard.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  # node-pty is rebuilt against the Electron ABI by `electron-builder install-app-deps`
+  # in the postinstall hook.
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Clawd Station
+  installerLanguages: ["zh_CN", "en_US"]
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: "${productName}-${version}-portable.${ext}"
+
+mac:
+  icon: build/icon.icns
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+dmg:
+  writeUpdateInfo: false

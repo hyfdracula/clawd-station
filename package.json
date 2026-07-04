@@ -4,6 +4,10 @@
   "private": false,
   "productName": "Clawd Station",
   "description": "A personal desktop workbench for Claude Code conversations.",
+  "author": {
+    "name": "Clawd Station",
+    "email": "noreply@clawdstation.local"
+  },
   "license": "MIT",
   "type": "module",
   "main": "electron/main.cjs",
@@ -12,23 +16,27 @@
     "electron": "electron .",
     "desktop": "npm run build && NODE_ENV=production electron .",
     "build": "tsc && vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "postinstall": "patch-package && electron-builder install-app-deps",
+    "package:win": "npm run build && electron-builder --win nsis portable",
+    "package:mac": "npm run build && electron-builder --mac dmg zip"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.5.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "electron": "^31.7.7",
     "lucide-react": "^0.468.0",
     "node-pty": "^1.1.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "typescript": "^5.8.3",
-    "vite": "^5.4.19"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.1.0",
     "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3"
+    "@types/react-dom": "^19.2.3",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3",
+    "patch-package": "^8.0.1",
+    "typescript": "^5.8.3",
+    "vite": "^5.4.19"
   }
 }

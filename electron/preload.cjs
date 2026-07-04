@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld("workbench", {
   onClaudeDone: (callback) => subscribe("claude:done", callback),
   onClaudeError: (callback) => subscribe("claude:error", callback),
   onSelectMessageContent: (callback) => subscribe("edit:select-message-content", callback),
+  onCopyMessageContent: (callback) => subscribe("edit:copy-message-content", callback),
   terminalStart: (opts) => ipcRenderer.invoke("terminal:start", opts),
   terminalWrite: (id, data) => ipcRenderer.send("terminal:write", { id, data }),
   terminalResize: (id, cols, rows) => ipcRenderer.send("terminal:resize", { id, cols, rows }),
@@ -38,5 +39,10 @@ contextBridge.exposeInMainWorld("workbench", {
   onTerminalData: (callback) => subscribe("terminal:data", callback),
   onTerminalExit: (callback) => subscribe("terminal:exit", callback),
   notifyReady: () => ipcRenderer.send("app:renderer-ready"),
-  onOpenDirectory: (callback) => subscribe("open-directory", callback)
+  onOpenDirectory: (callback) => subscribe("open-directory", callback),
+  minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
+  toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
+  closeWindow: () => ipcRenderer.invoke("window:close"),
+  clipboardWriteText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
+  clipboardReadText: () => ipcRenderer.invoke("clipboard:read-text")
 });

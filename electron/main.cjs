@@ -1,8 +1,9 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, clipboard } = require("electron");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { normalizeTerminalAnsiForDisplay } = require("./terminal-ansi.cjs");
 
 let pty = null;
 try {
@@ -17,10 +18,12 @@ const terminals = new Map();
 let pendingOpenDirectories = [];
 let rendererReady = false;
 
-app.on("open-file", (event, filePath) => {
-  event.preventDefault();
-  handleOpenPath(filePath);
-});
+if (process.platform === "darwin") {
+  app.on("open-file", (event, filePath) => {
+    event.preventDefault();
+    handleOpenPath(filePath);
+  });
+}
 
 function handleOpenPath(filePath) {
   let directory = filePath;
@@ -69,15 +72,38 @@ function getFinderDirectory() {
 }
 
 function openFinderFolderSession() {
+  if (process.platform !== "darwin") return;
   const dir = getFinderDirectory();
   if (!dir || dir === lastFinderDir) return;
   lastFinderDir = dir;
   handleOpenPath(dir);
 }
 
-const bundledIndex = path.join(process.resourcesPath, "app/dist/index.html");
-const hasBundledBuild = fs.existsSync(bundledIndex);
+const bundledIndexCandidates = app.isPackaged
+  ? [
+      path.join(process.resourcesPath, "app", "dist", "index.html"),
+      path.join(process.resourcesPath, "app.asar", "dist", "index.html"),
+      path.join(__dirname, "..", "dist", "index.html")
+    ]
+  : [];
+const bundledIndex = bundledIndexCandidates.find((candidate) => fs.existsSync(candidate)) || "";
+const hasBundledBuild = Boolean(bundledIndex);
 const isDev = !hasBundledBuild && !app.isPackaged && process.env.NODE_ENV !== "production";
+
+function resolveClaudeCommand() {
+  if (process.env.CLAUDE_CODE_BIN) return process.env.CLAUDE_CODE_BIN;
+  if (process.env.CLAUDE_BIN) return process.env.CLAUDE_BIN;
+  return "claude";
+}
+const claudeExecutable = resolveClaudeCommand();
+
+function resolveLoginShell() {
+  if (process.platform === "win32") {
+    return { command: process.env.ComSpec || "cmd.exe", args: [] };
+  }
+  const shell = process.env.SHELL || "/bin/zsh";
+  return { command: shell, args: ["-l"] };
+}
 const claudeCommandOverride = process.env.CLAUDE_CODE_BIN || process.env.CLAUDE_BIN || "";
 const claudeCommandLabel = claudeCommandOverride || "claude (via login shell)";
 const mockClaude = process.env.CLAUDE_TO_CODE_MOCK === "1" || process.env.CLAUDE_WORKBENCH_MOCK === "1";
@@ -94,6 +120,8 @@ let conversations = [];
 const activeClaudeRuns = new Map();
 
 function createWindow() {
+  const isMac = process.platform === "darwin";
+  if (!isMac) Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     show: !smokeMode,
     width: 1240,
@@ -101,10 +129,11 @@ function createWindow() {
     minWidth: 920,
     minHeight: 620,
     title: "Clawd Station",
-    backgroundColor: "#00000000",
-    transparent: true,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 18, y: 18 },
+    backgroundColor: isMac ? "#00000000" : "#0a0a0a",
+    transparent: isMac,
+    frame: isMac,
+    titleBarStyle: isMac ? "hiddenInset" : "hidden",
+    ...(isMac ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -139,6 +168,12 @@ function createWindow() {
     } else {
       template.push(
         { label: "复制", role: "copy", enabled: hasSelection },
+        {
+          label: "复制消息全文",
+          click: () => {
+            mainWindow.webContents.send("edit:copy-message-content", { x: params.x, y: params.y });
+          }
+        },
         { type: "separator" },
         {
           label: "选择本条消息",
@@ -155,7 +190,7 @@ function createWindow() {
   if (isDev) {
     mainWindow.loadURL("http://127.0.0.1:5173");
   } else {
-    mainWindow.loadFile(hasBundledBuild ? bundledIndex : path.join(__dirname, "../dist/index.html"));
+    mainWindow.loadFile(bundledIndex || path.join(__dirname, "../dist/index.html"));
   }
 
   if (smokeMode) {
@@ -611,13 +646,8 @@ function runClaude({ conversationId, prompt, attachments }) {
   ];
 
   const child = spawn(
-    "/bin/zsh",
-    [
-      "-lc",
-      'if [ -n "$CLAUDE_CODE_BIN" ]; then exec "$CLAUDE_CODE_BIN" "$@"; elif [ -n "$CLAUDE_BIN" ]; then exec "$CLAUDE_BIN" "$@"; else exec claude "$@"; fi',
-      "claude-to-code",
-      ...args
-    ],
+    claudeExecutable,
+    args,
     {
       cwd: resolveCwd(conversation.directory),
       env: { ...process.env, FORCE_COLOR: "0" },
@@ -738,13 +768,8 @@ function checkClaudeConnection() {
   }
 
   const result = spawn(
-    "/bin/zsh",
-    [
-      "-lc",
-      'if [ -n "$CLAUDE_CODE_BIN" ]; then exec "$CLAUDE_CODE_BIN" "$@"; elif [ -n "$CLAUDE_BIN" ]; then exec "$CLAUDE_BIN" "$@"; else exec claude "$@"; fi',
-      "claude-to-code-check",
-      "--version"
-    ],
+    claudeExecutable,
+    ["--version"],
     {
       cwd: defaultDirectory(),
       env: { ...process.env, FORCE_COLOR: "0" },
@@ -901,6 +926,27 @@ function sendToRenderer(channel, payload) {
   }
 }
 
+function safeWindowOp(op) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try { op(mainWindow); } catch (error) { console.error("window control failed:", error && error.message); }
+}
+
+ipcMain.handle("window:minimize", () => { safeWindowOp((win) => win.minimize()); return { ok: true }; });
+ipcMain.handle("window:toggle-maximize", () => {
+  safeWindowOp((win) => { if (win.isMaximized()) win.unmaximize(); else win.maximize(); });
+  return { ok: true, maximized: mainWindow?.isMaximized() ?? false };
+});
+ipcMain.handle("window:close", () => { safeWindowOp((win) => win.close()); return { ok: true }; });
+
+ipcMain.handle("clipboard:write-text", (_event, text) => {
+  try { clipboard.writeText(typeof text === "string" ? text : ""); return { ok: true }; }
+  catch (error) { return { ok: false, error: error && error.message }; }
+});
+ipcMain.handle("clipboard:read-text", () => {
+  try { return { ok: true, text: clipboard.readText() }; }
+  catch (error) { return { ok: false, error: error && error.message }; }
+});
+
 ipcMain.handle("terminal:start", async (_event, { id, cwd, cols, rows, autoRun }) => {
   if (!pty) return { ok: false, error: "终端引擎 node-pty 未加载" };
   try {
@@ -911,15 +957,15 @@ ipcMain.handle("terminal:start", async (_event, { id, cwd, cols, rows, autoRun }
       } catch {}
       terminals.delete(id);
     }
-    const shell = process.env.SHELL || "/bin/zsh";
-    const term = pty.spawn(shell, ["-l"], {
+    const shell = resolveLoginShell();
+    const term = pty.spawn(shell.command, shell.args, {
       name: "xterm-256color",
       cols: cols || 80,
       rows: rows || 24,
       cwd: resolveCwd(cwd),
       env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" }
     });
-    term.onData((data) => sendToRenderer("terminal:data", { id, data }));
+    term.onData((data) => sendToRenderer("terminal:data", { id, data: normalizeTerminalAnsiForDisplay(data) }));
     term.onExit(({ exitCode }) => {
       terminals.delete(id);
       sendToRenderer("terminal:exit", { id, exitCode });

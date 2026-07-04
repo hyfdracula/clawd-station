@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { getTerminalRenderOptions } from "./terminalAppearance";
+import { handleTerminalClipboardShortcut } from "./terminalClipboard";
+import { installTerminalBlockArtSmoothing } from "./terminalBlockArt";
 
 const TERMINAL_THEME = {
   background: "#FFFFFF",
@@ -27,10 +30,6 @@ const TERMINAL_THEME = {
   brightWhite: "#1E2A3A"
 };
 
-// One persistent terminal per session. It mounts once (spawning a node-pty shell that
-// auto-runs claude) and STAYS mounted while other sessions are active — only its
-// visibility toggles. That keeps the shell, claude process and scrollback alive when
-// you switch between sessions, so history is never lost.
 function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -41,9 +40,7 @@ function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: bo
     if (!container) return;
 
     const term = new Terminal({
-      fontFamily: '"Anthropic Mono", "SF Mono", ui-monospace, Menlo, Monaco, monospace',
-      fontSize: 13,
-      lineHeight: 1.25,
+      ...getTerminalRenderOptions(),
       cursorBlink: true,
       scrollback: 10000,
       allowProposedApi: true,
@@ -52,6 +49,7 @@ function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: bo
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(container);
+    const disposeBlockArtSmoothing = installTerminalBlockArtSmoothing(container);
     termRef.current = term;
     fitRef.current = fit;
     try {
@@ -61,9 +59,31 @@ function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: bo
     }
 
     const wb = window.workbench;
+    term.attachCustomKeyEventHandler((event) =>
+      handleTerminalClipboardShortcut(event, term, {
+        writeText: (text) => {
+          if (wb?.clipboardWriteText) return wb.clipboardWriteText(text);
+          return navigator.clipboard
+            .writeText(text)
+            .then(() => ({ ok: true }))
+            .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Clipboard write failed" }));
+        },
+        readText: () => {
+          if (wb?.clipboardReadText) return wb.clipboardReadText();
+          return navigator.clipboard
+            .readText()
+            .then((text) => ({ ok: true, text }))
+            .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Clipboard read failed" }));
+        }
+      })
+    );
+
     if (!wb) {
       term.writeln("终端仅在桌面 App 中可用（当前为浏览器预览模式）。");
-      return () => term.dispose();
+      return () => {
+        disposeBlockArtSmoothing();
+        term.dispose();
+      };
     }
 
     wb.terminalStart({ id, cwd, cols: term.cols, rows: term.rows, autoRun: "claude" }).then((result) => {
@@ -91,17 +111,16 @@ function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: bo
     resizeObserver.observe(container);
 
     return () => {
-      // Only runs when this session is removed (deleted), not on a plain switch.
       resizeObserver.disconnect();
       offData();
       offExit();
       onInput.dispose();
       wb.terminalKill(id);
+      disposeBlockArtSmoothing();
       term.dispose();
     };
   }, [id, cwd]);
 
-  // When this view becomes visible again, re-measure and refocus.
   useEffect(() => {
     if (!active) return;
     const term = termRef.current;
@@ -122,8 +141,6 @@ function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: bo
   return <div className="terminal-pane" ref={containerRef} style={{ display: active ? "block" : "none" }} />;
 }
 
-// Keeps a live terminal for every session that has been opened, showing only the
-// active one. Sessions that get deleted are pruned (their pty is killed).
 export function TerminalDeck({ activeId, sessions }: { activeId: string; sessions: { id: string; cwd: string }[] }) {
   const [mountedIds, setMountedIds] = useState<string[]>([]);
   const existingKey = sessions.map((s) => s.id).join(",");
@@ -140,7 +157,6 @@ export function TerminalDeck({ activeId, sessions }: { activeId: string; session
       }
       return next;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, existingKey]);
 
   const cwdById = new Map(sessions.map((s) => [s.id, s.cwd]));

@@ -2295,6 +2295,36 @@ textarea:focus-visible {
   height: 100%;
 }
 
+.terminal-pane .xterm-rows span.clawd-block-art {
+  position: relative;
+  color: transparent !important;
+  text-shadow: none !important;
+}
+
+.terminal-pane .xterm-rows span.clawd-block-art .clawd-block-overlay {
+  position: absolute;
+  inset: 0 auto auto 0;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.terminal-pane .xterm-rows span.clawd-block-art .clawd-block-cell {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.terminal-pane .xterm-rows span.clawd-block-art .clawd-block-fragment {
+  position: absolute;
+  display: block;
+  background: var(--clawd-block-color, currentColor);
+  transform: translate(-0.5px, -0.5px);
+  box-shadow: 0 0 0 0.7px var(--clawd-block-color, currentColor);
+}
+
 .terminal-pane .xterm-viewport {
   background: transparent !important;
   border-radius: 0.5rem;
