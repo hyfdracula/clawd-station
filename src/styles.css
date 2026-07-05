@@ -1,8 +1,8 @@
 :root {
   color-scheme: light;
-  --font-sans: "Anthropic Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Helvetica Neue", Arial, system-ui, sans-serif;
-  --font-serif: "Anthropic Serif", "Iowan Old Style", "New York", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
-  --font-mono: "Anthropic Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-sans: "Anthropic Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Helvetica Neue", Arial, system-ui, "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Source Han Sans SC", "Noto Sans CJK SC", "WenQuanYi Micro Hei", SimHei, "黑体", sans-serif;
+  --font-serif: "Anthropic Serif", "Iowan Old Style", "New York", "Palatino Linotype", Palatino, Georgia, "Times New Roman", "Source Han Serif SC", "Noto Serif CJK SC", SimSun, "宋体", serif;
+  --font-mono: "Anthropic Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Cascadia Code", monospace;
   font-family: var(--font-sans);
   font-kerning: normal;
   text-rendering: optimizeLegibility;
