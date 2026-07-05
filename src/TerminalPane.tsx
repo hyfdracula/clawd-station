@@ -11,27 +11,31 @@ import { installTerminalBlockArtSmoothing } from "./terminalBlockArt";
 // import { remapAnsiBackground } from "./terminalAnsiRemap";
 
 const TERMINAL_THEME = {
-  background: "#FFFFFF",
-  foreground: "#1E2A3A",
+  // Dark theme — Codex / OpenCode / Claude Code TUIs are designed for dark
+  // backgrounds. Forcing them onto the cream app surface clashed with their
+  // input boxes and prompts (which they draw with explicit dark ANSI bg).
+  // The terminal pane is now visually distinct from the sidebar by design.
+  background: "#1A1B26",
+  foreground: "#C0CAF5",
   cursor: "#E8632A",
-  cursorAccent: "#FFFFFF",
-  selectionBackground: "#ECE3D4",
-  black: "#1E2A3A",
-  red: "#C0392B",
-  green: "#2E7D46",
-  yellow: "#B8860B",
-  blue: "#2E6DA4",
-  magenta: "#8E44AD",
-  cyan: "#1F8A99",
-  white: "#5A6B82",
-  brightBlack: "#8493A8",
-  brightRed: "#E2574F",
-  brightGreen: "#3E9B73",
-  brightYellow: "#E0A82E",
-  brightBlue: "#3E7CA8",
-  brightMagenta: "#A569BD",
-  brightCyan: "#2AA5B5",
-  brightWhite: "#1E2A3A"
+  cursorAccent: "#1A1B26",
+  selectionBackground: "#3B4261",
+  black: "#15161E",
+  red: "#F7768E",
+  green: "#9ECE6A",
+  yellow: "#E0AF68",
+  blue: "#7AA2F7",
+  magenta: "#BB9AF7",
+  cyan: "#7DCFFF",
+  white: "#A9B1D6",
+  brightBlack: "#414868",
+  brightRed: "#F7768E",
+  brightGreen: "#9ECE6A",
+  brightYellow: "#E0AF68",
+  brightBlue: "#7AA2F7",
+  brightMagenta: "#BB9AF7",
+  brightCyan: "#7DCFFF",
+  brightWhite: "#C0CAF5"
 };
 
 function TerminalView({ id, cwd, active, engine }: { id: string; cwd: string; active: boolean; engine?: string }) {

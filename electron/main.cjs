@@ -3,7 +3,7 @@ const { spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { createTerminalAnsiDisplayNormalizer } = require("./terminal-ansi.cjs");
+const { createTerminalAnsiPassthrough } = require("./terminal-ansi.cjs");
 const engines = require("./engines.cjs");
 const { ENGINES, getEngine } = engines;
 
@@ -1341,12 +1341,12 @@ ipcMain.handle("terminal:start", async (_event, { id, cwd, cols, rows, autoRun }
       cwd: resolveCwd(cwd),
       env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" }
     });
-    // Per-PTY stateful normalizer — node-pty may emit chunks that split a
-    // single ANSI sequence (e.g. "\x1b[48;" then "5;235m"), and a stateless
-    // regex per chunk would miss it. The factory buffers a partial trailing
-    // SGR until the terminator arrives in the next chunk.
-    const normalizeForThisTerminal = createTerminalAnsiDisplayNormalizer();
-    term.onData((data) => sendToRenderer("terminal:data", { id, data: normalizeForThisTerminal(data) }));
+    // Per-PTY passthrough buffers partial ANSI sequences that arrive across
+    // chunk boundaries so the renderer always sees complete sequences.
+    // (xterm.js reassembles internally; this is a defense-in-depth safety net
+    // for downstream code that might want to parse ANSI later.)
+    const passthroughForThisTerminal = createTerminalAnsiPassthrough();
+    term.onData((data) => sendToRenderer("terminal:data", { id, data: passthroughForThisTerminal(data) }));
     term.onExit(({ exitCode }) => {
       terminals.delete(id);
       sendToRenderer("terminal:exit", { id, exitCode });
