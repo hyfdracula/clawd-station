@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import { getTerminalRenderOptions } from "./terminalAppearance";
 import { handleTerminalClipboardShortcut } from "./terminalClipboard";
 import { installTerminalBlockArtSmoothing } from "./terminalBlockArt";
+import { remapAnsiBackground } from "./terminalAnsiRemap";
 
 const TERMINAL_THEME = {
   background: "#FFFFFF",
@@ -94,7 +95,7 @@ function TerminalView({ id, cwd, active, engine }: { id: string; cwd: string; ac
     });
 
     const offData = wb.onTerminalData((event) => {
-      if (event.id === id) term.write(event.data);
+      if (event.id === id) term.write(remapAnsiBackground(event.data));
     });
     const offExit = wb.onTerminalExit((event) => {
       if (event.id === id) term.writeln("\r\n\x1b[90m[进程已退出，代码 " + event.exitCode + "]\x1b[0m");

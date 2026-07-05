@@ -26,16 +26,18 @@ test("Windows terminal font stack prioritizes installed glyph-safe monospace fon
   const fontFamily = getTerminalFontFamily("Win32");
 
   assert.match(fontFamily, /^"Cascadia Mono", "Cascadia Code", Consolas, "Courier New"/);
+  assert.match(fontFamily, /SimHei/);
   assert.match(fontFamily, /monospace$/);
   assert.equal(fontFamily.startsWith('"Anthropic Mono"'), false);
 });
 test("terminal rendering lets fonts draw block and quadrant glyphs", () => {
   const { getTerminalRenderOptions } = loadTerminalAppearanceModule();
 
-  assert.deepEqual(getTerminalRenderOptions("Win32"), {
-    customGlyphs: false,
-    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
-    lineHeight: 1,
-    rescaleOverlappingGlyphs: true
-  });
+  const options = getTerminalRenderOptions("Win32");
+  assert.equal(options.customGlyphs, false);
+  assert.equal(options.lineHeight, 1);
+  assert.equal(options.rescaleOverlappingGlyphs, true);
+  assert.match(options.fontFamily, /^"Cascadia Mono"/);
+  assert.match(options.fontFamily, /SimHei/);
+  assert.match(options.fontFamily, /monospace$/);
 });
