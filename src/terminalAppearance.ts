@@ -1,7 +1,7 @@
 const WINDOWS_TERMINAL_FONT_FAMILY =
-  '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace';
+  '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", SimHei, "黑体", "Microsoft YaHei", "Sarasa Mono SC", "Noto Sans Mono CJK SC", monospace';
 const DEFAULT_TERMINAL_FONT_FAMILY =
-  '"SF Mono", Menlo, Monaco, "Cascadia Mono", Consolas, "Cascadia Code", "DejaVu Sans Mono", monospace';
+  '"SF Mono", Menlo, Monaco, "Cascadia Mono", Consolas, "Cascadia Code", "DejaVu Sans Mono", SimHei, "黑体", "Microsoft YaHei", "Sarasa Mono SC", "Noto Sans Mono CJK SC", monospace';
 
 export function getTerminalFontFamily(
   platform: string = typeof navigator === "undefined" ? "" : navigator.platform
