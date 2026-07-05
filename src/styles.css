@@ -2593,15 +2593,15 @@ textarea:focus-visible {
   flex-shrink: 0;
 }
 
-/* Terminal pane — dark surface so CLI TUIs (Codex, OpenCode, Claude Code)
-   that are designed for dark backgrounds render naturally. The pane sits
-   inside the cream app shell as an intentional visual contrast. */
+/* Terminal pane — pure black surface so CLI TUIs (Codex, OpenCode, Claude
+   Code) render in their native style. The pane sits inside the cream app
+   shell as an intentional visual contrast. */
 .terminal-pane,
 .terminal-pane .xterm,
 .terminal-pane .xterm-viewport,
 .terminal-pane .xterm-screen,
 .terminal-pane .xterm-screen canvas {
-  background-color: #1A1B26 !important;
+  background-color: #000000 !important;
 }
 
 /* Workspace header engine strip */

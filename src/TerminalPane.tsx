@@ -11,31 +11,30 @@ import { installTerminalBlockArtSmoothing } from "./terminalBlockArt";
 // import { remapAnsiBackground } from "./terminalAnsiRemap";
 
 const TERMINAL_THEME = {
-  // Dark theme — Codex / OpenCode / Claude Code TUIs are designed for dark
-  // backgrounds. Forcing them onto the cream app surface clashed with their
-  // input boxes and prompts (which they draw with explicit dark ANSI bg).
-  // The terminal pane is now visually distinct from the sidebar by design.
-  background: "#1A1B26",
-  foreground: "#C0CAF5",
-  cursor: "#E8632A",
-  cursorAccent: "#1A1B26",
-  selectionBackground: "#3B4261",
-  black: "#15161E",
-  red: "#F7768E",
-  green: "#9ECE6A",
-  yellow: "#E0AF68",
-  blue: "#7AA2F7",
-  magenta: "#BB9AF7",
-  cyan: "#7DCFFF",
-  white: "#A9B1D6",
-  brightBlack: "#414868",
-  brightRed: "#F7768E",
-  brightGreen: "#9ECE6A",
-  brightYellow: "#E0AF68",
-  brightBlue: "#7AA2F7",
-  brightMagenta: "#BB9AF7",
-  brightCyan: "#7DCFFF",
-  brightWhite: "#C0CAF5"
+  // Pure black/white terminal — Codex / OpenCode / Claude Code all assume a
+  // classic dark terminal. Keep colors saturated so CLI tool output (red
+  // errors, green success) reads clearly.
+  background: "#000000",
+  foreground: "#E0E0E0",
+  cursor: "#FFFFFF",
+  cursorAccent: "#000000",
+  selectionBackground: "#444444",
+  black: "#000000",
+  red: "#E06C75",
+  green: "#98C379",
+  yellow: "#E5C07B",
+  blue: "#61AFEF",
+  magenta: "#C678DD",
+  cyan: "#56B6C2",
+  white: "#ABB2BF",
+  brightBlack: "#5C6370",
+  brightRed: "#E06C75",
+  brightGreen: "#98C379",
+  brightYellow: "#E5C07B",
+  brightBlue: "#61AFEF",
+  brightMagenta: "#C678DD",
+  brightCyan: "#56B6C2",
+  brightWhite: "#FFFFFF"
 };
 
 function TerminalView({ id, cwd, active, engine }: { id: string; cwd: string; active: boolean; engine?: string }) {
