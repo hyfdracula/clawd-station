@@ -1302,7 +1302,8 @@ export function App() {
                 activeId={activeConversation?.id ?? ""}
                 sessions={sortedConversations.map((conversation) => ({
                   id: conversation.id,
-                  cwd: conversation.directory || "~"
+                  cwd: conversation.directory || "~",
+                  engine: conversation.engine
                 }))}
               />
               <input ref={fileInputRef} className="hidden-input" type="file" multiple onChange={handleBrowserFiles} />

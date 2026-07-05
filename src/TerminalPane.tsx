@@ -30,7 +30,7 @@ const TERMINAL_THEME = {
   brightWhite: "#1E2A3A"
 };
 
-function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: boolean }) {
+function TerminalView({ id, cwd, active, engine }: { id: string; cwd: string; active: boolean; engine?: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -86,7 +86,8 @@ function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: bo
       };
     }
 
-    wb.terminalStart({ id, cwd, cols: term.cols, rows: term.rows, autoRun: "claude" }).then((result) => {
+    const autoRun = engine === "codex" ? "codex" : engine === "opencode" ? "opencode" : "claude";
+    wb.terminalStart({ id, cwd, cols: term.cols, rows: term.rows, autoRun }).then((result) => {
       if (!result.ok) {
         term.writeln("\x1b[31m终端启动失败：" + (result.error ?? "未知错误") + "\x1b[0m");
       }
@@ -141,7 +142,7 @@ function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: bo
   return <div className="terminal-pane" ref={containerRef} style={{ display: active ? "block" : "none" }} />;
 }
 
-export function TerminalDeck({ activeId, sessions }: { activeId: string; sessions: { id: string; cwd: string }[] }) {
+export function TerminalDeck({ activeId, sessions }: { activeId: string; sessions: { id: string; cwd: string; engine?: string }[] }) {
   const [mountedIds, setMountedIds] = useState<string[]>([]);
   const existingKey = sessions.map((s) => s.id).join(",");
 
@@ -160,11 +161,18 @@ export function TerminalDeck({ activeId, sessions }: { activeId: string; session
   }, [activeId, existingKey]);
 
   const cwdById = new Map(sessions.map((s) => [s.id, s.cwd]));
+  const engineById = new Map(sessions.map((s) => [s.id, s.engine]));
 
   return (
     <>
       {mountedIds.map((id) => (
-        <TerminalView key={id} id={id} cwd={cwdById.get(id) ?? "~"} active={id === activeId} />
+        <TerminalView
+          key={id}
+          id={id}
+          cwd={cwdById.get(id) ?? "~"}
+          active={id === activeId}
+          engine={engineById.get(id)}
+        />
       ))}
     </>
   );
