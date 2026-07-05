@@ -3,7 +3,7 @@ const { spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { normalizeTerminalAnsiForDisplay } = require("./terminal-ansi.cjs");
+const { createTerminalAnsiDisplayNormalizer } = require("./terminal-ansi.cjs");
 const engines = require("./engines.cjs");
 const { ENGINES, getEngine } = engines;
 
@@ -1341,7 +1341,12 @@ ipcMain.handle("terminal:start", async (_event, { id, cwd, cols, rows, autoRun }
       cwd: resolveCwd(cwd),
       env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" }
     });
-    term.onData((data) => sendToRenderer("terminal:data", { id, data: normalizeTerminalAnsiForDisplay(data) }));
+    // Per-PTY stateful normalizer — node-pty may emit chunks that split a
+    // single ANSI sequence (e.g. "\x1b[48;" then "5;235m"), and a stateless
+    // regex per chunk would miss it. The factory buffers a partial trailing
+    // SGR until the terminator arrives in the next chunk.
+    const normalizeForThisTerminal = createTerminalAnsiDisplayNormalizer();
+    term.onData((data) => sendToRenderer("terminal:data", { id, data: normalizeForThisTerminal(data) }));
     term.onExit(({ exitCode }) => {
       terminals.delete(id);
       sendToRenderer("terminal:exit", { id, exitCode });

@@ -2593,6 +2593,16 @@ textarea:focus-visible {
   flex-shrink: 0;
 }
 
+/* Terminal pane — keep the xterm canvas white so any SGR escape that
+   somehow leaks through (or before normalization kicks in) renders against
+   the cream app surface, not the OS terminal default of black. */
+.terminal-pane .xterm,
+.terminal-pane .xterm-viewport,
+.terminal-pane .xterm-screen,
+.terminal-pane .xterm-screen canvas {
+  background-color: #FFFFFF !important;
+}
+
 /* Workspace header engine strip */
 .workspace-engine-strip {
   display: inline-flex;
