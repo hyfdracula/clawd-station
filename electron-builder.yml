@@ -8,6 +8,10 @@ files:
   - electron/**/*
   - dist/**/*
   - package.json
+  - "!dist/win-unpacked/**"
+  - "!dist/Clawd Station-*.exe"
+  - "!dist/Clawd Station-*.exe.blockmap"
+  - "!dist/latest.yml"
   - "!**/*.map"
   - "!**/.DS_Store"
 asar: true
