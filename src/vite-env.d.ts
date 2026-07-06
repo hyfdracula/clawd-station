@@ -154,6 +154,7 @@ interface Window {
     setSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
     checkForUpdates: () => Promise<void>;
     quitAndInstall: () => Promise<void>;
+    closeWindow: () => Promise<{ ok: boolean; hidden?: boolean }>;
     setCloseBehavior: (value: "quit" | "tray") => Promise<{ closeBehavior: "quit" | "tray" }>;
     pickDirectory: () => Promise<string | null>;
     sendToClaude: (payload: {

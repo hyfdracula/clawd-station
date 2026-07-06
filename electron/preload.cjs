@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld("workbench", {
   setSettings: (patch) => ipcRenderer.invoke("settings:set", patch),
   checkForUpdates: () => ipcRenderer.invoke("updater:check"),
   quitAndInstall: () => ipcRenderer.invoke("updater:quit-and-install"),
+  closeWindow: () => ipcRenderer.invoke("window:close"),
   setCloseBehavior: (value) => ipcRenderer.invoke("settings:set-close-behavior", value),
   pickDirectory: () => ipcRenderer.invoke("settings:pick-directory"),
   sendToClaude: (payload) => ipcRenderer.invoke("claude:send", payload),

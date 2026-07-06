@@ -1424,6 +1424,17 @@ ipcMain.handle("updater:check", async () => {
   checkForUpdatesSilently();
 });
 
+// Single close handler — respects the user's closeBehavior setting.
+ipcMain.handle("window:close", async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+  if (closeBehavior === "tray" && !isQuitting) {
+    mainWindow.hide();
+    return { ok: true, hidden: true };
+  }
+  mainWindow.close();
+  return { ok: true, hidden: false };
+});
+
 ipcMain.handle("updater:quit-and-install", async () => {
   quitAndInstall();
 });

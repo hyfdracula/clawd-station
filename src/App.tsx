@@ -1028,12 +1028,19 @@ export function App() {
           <div className="sidebar-media-overlay" />
         </div>
         <div className="window-drag" />
+        <button
+          className="window-close"
+          type="button"
+          onClick={() => {
+            window.workbench?.closeWindow?.();
+          }}
+          aria-label={closeBehavior === "tray" ? "隐藏到托盘" : "关闭应用"}
+          title={closeBehavior === "tray" ? "隐藏到托盘" : "关闭应用"}
+        >
+          <X aria-hidden="true" />
+        </button>
         {appView === "settings" ? (
           <>
-            <button className="settings-back" type="button" onClick={() => setAppView("chat")}>
-              <ArrowLeft aria-hidden="true" />
-              返回应用
-            </button>
             <label className="search-field">
               <Search aria-hidden="true" />
               <span className="sr-only">搜索设置</span>
@@ -1393,7 +1400,7 @@ export function App() {
                     ))}
                   </div>
                 </section>
-              ) : (
+              ) : settingsSection === "behavior" ? (
                 <section className="settings-card" aria-label="行为设置">
                   <div className="setting-row">
                     <span>关闭按钮</span>
@@ -1427,8 +1434,7 @@ export function App() {
                     </div>
                   </div>
                 </section>
-              )}
-              {settingsSection === "about" ? (
+              ) : settingsSection === "about" ? (
                 <section className="settings-card" aria-label="版本与更新">
                   <div className="setting-row">
                     <span>版本</span>
