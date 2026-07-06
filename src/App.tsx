@@ -1029,7 +1029,7 @@ export function App() {
         </div>
         <div className="window-drag" />
         <button
-          className="window-close"
+          className="icon-button settings-close"
           type="button"
           onClick={() => {
             window.workbench?.closeWindow?.();
