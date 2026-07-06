@@ -1,6 +1,6 @@
 {
   "name": "clawd-station",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "private": false,
   "productName": "Clawd Station",
   "description": "A personal desktop workbench for Claude Code conversations.",
