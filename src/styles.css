@@ -2428,7 +2428,7 @@ textarea:focus-visible {
   position: fixed;
   top: var(--space-sm);
   right: var(--space-sm);
-  z-index: 10;
+  z-index: 25;
   display: inline-flex;
   align-items: center;
   justify-content: center;
