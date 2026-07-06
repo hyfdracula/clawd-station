@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld("workbench", {
   pickBackgroundImage: () => ipcRenderer.invoke("appearance:pick-background-image"),
   pickBackgroundVideo: () => ipcRenderer.invoke("appearance:pick-background-video"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
+  setSettings: (patch) => ipcRenderer.invoke("settings:set", patch),
   setCloseBehavior: (value) => ipcRenderer.invoke("settings:set-close-behavior", value),
   pickDirectory: () => ipcRenderer.invoke("settings:pick-directory"),
   sendToClaude: (payload) => ipcRenderer.invoke("claude:send", payload),

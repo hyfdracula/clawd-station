@@ -181,7 +181,11 @@ export function App() {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [appView, setAppView] = useState<AppView>("chat");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("background");
+  // Appearance starts from a local default, then gets hydrated from
+  // main-process settings on first mount. Subsequent changes are
+  // persisted to local-records/settings.json via the setSettings IPC.
   const [appearance, setAppearance] = useState(loadAppearance);
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [engines, setEngines] = useState<EngineInfo[]>([]);
   const [showNewConversationModal, setShowNewConversationModal] = useState(false);
   const [closeBehavior, setCloseBehavior] = useState<"quit" | "tray">("quit");
@@ -232,9 +236,14 @@ export function App() {
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeId) ?? conversations[0];
 
+  // Persist appearance to main-process settings.json once we've finished
+  // hydrating from disk. Avoids re-writing the file on the initial
+  // hydration tick.
   useEffect(() => {
-    window.localStorage.setItem("claude-workbench-appearance", JSON.stringify(appearance));
-  }, [appearance]);
+    if (!settingsHydrated) return;
+    if (!window.workbench?.setSettings) return;
+    void window.workbench.setSettings({ appearance });
+  }, [appearance, settingsHydrated]);
 
   function splitStreamChunk(text: string) {
     const pieces: string[] = [];
@@ -372,6 +381,13 @@ export function App() {
       if (settings.closeBehavior === "tray" || settings.closeBehavior === "quit") {
         setCloseBehavior(settings.closeBehavior);
       }
+      // Hydrate appearance from disk (overrides the local default if the
+      // user has previously changed anything). Mark hydrated so the local-
+      // storage sync useEffect below knows it's safe to start persisting.
+      if (settings.appearance && typeof settings.appearance === "object") {
+        setAppearance((current) => ({ ...current, ...settings.appearance }));
+      }
+      setSettingsHydrated(true);
     });
 
     const offChanged = window.workbench.onConversationsChanged((items) => {
@@ -1172,11 +1188,21 @@ export function App() {
           <div className="settings-page">
             <div className="settings-content">
               <header className="settings-page-header">
-                <h2>{settingsSection === "background" ? "背景" : "Loading"}</h2>
+                <button
+                  className="icon-button settings-close"
+                  type="button"
+                  onClick={() => setAppView("chat")}
+                  aria-label="关闭设置"
+                >
+                  <X aria-hidden="true" />
+                </button>
+                <h2>{settingsSection === "background" ? "背景" : settingsSection === "loading" ? "Loading" : "行为"}</h2>
                 <p>
                   {settingsSection === "background"
                     ? "调整对话文本大框的背景颜色、图片和透明度。"
-                    : "选择 Claude Code 处理任务时，小 logo 位置显示的 loading 动画。"}
+                    : settingsSection === "loading"
+                      ? "选择 Claude Code 处理任务时，小 logo 位置显示的 loading 动画。"
+                      : "配置点击关闭按钮时的行为。"}
                 </p>
               </header>
               {settingsSection === "background" ? (

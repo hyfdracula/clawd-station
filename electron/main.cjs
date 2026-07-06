@@ -1384,10 +1384,23 @@ ipcMain.handle("claude:send", async (_event, payload) => {
   }
 });
 
-// --- App settings (close behavior, etc.) ---
+// --- App settings (close behavior, appearance, etc.) ---
 
 ipcMain.handle("settings:get", async () => {
   return loadSettings();
+});
+
+ipcMain.handle("settings:set", async (_event, patch) => {
+  const next = patch && typeof patch === "object" ? patch : {};
+  saveSettings(next);
+  // Some patches need side-effects (e.g. closeBehavior affects the close
+  // handler). Apply known ones here.
+  if (Object.prototype.hasOwnProperty.call(next, "closeBehavior")) {
+    const value = next.closeBehavior === "tray" ? "tray" : "quit";
+    closeBehavior = value;
+    refreshTrayMenu();
+  }
+  return next;
 });
 
 ipcMain.handle("settings:set-close-behavior", async (_event, value) => {

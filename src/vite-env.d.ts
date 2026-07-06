@@ -117,6 +117,15 @@ interface WorkbenchInfo {
 
 interface AppSettings {
   closeBehavior?: "quit" | "tray";
+  appearance?: Partial<{
+    chatBackground: string;
+    chatOpacity: number;
+    chatImageUrl: string;
+    chatImagePath: string;
+    chatVideoUrl: string;
+    chatVideoPath: string;
+    loadingVariant: string;
+  }>;
   [key: string]: unknown;
 }
 
@@ -131,6 +140,7 @@ interface Window {
     pickBackgroundImage: () => Promise<PickedBackgroundImage | null>;
     pickBackgroundVideo: () => Promise<PickedBackgroundVideo | null>;
     getSettings: () => Promise<AppSettings>;
+    setSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
     setCloseBehavior: (value: "quit" | "tray") => Promise<{ closeBehavior: "quit" | "tray" }>;
     pickDirectory: () => Promise<string | null>;
     sendToClaude: (payload: {

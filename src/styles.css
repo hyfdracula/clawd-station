@@ -2412,6 +2412,13 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--surface-soft);
 }
 
+.settings-close {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  z-index: 1;
+}
+
 .modal-header h3 {
   margin: 0;
   font-family: var(--font-serif);
