@@ -74,7 +74,7 @@ const statusIcon: Record<Status, ReactNode> = {
 };
 
 type AppView = "chat" | "settings";
-type SettingsSection = "background" | "loading" | "behavior";
+type SettingsSection = "background" | "loading" | "behavior" | "about";
 
 const loadingOptions = [
   { id: "ring", label: "Ring" },
@@ -1065,6 +1065,14 @@ export function App() {
                 <Settings aria-hidden="true" />
                 行为
               </button>
+              <button
+                className={`settings-nav-item ${settingsSection === "about" ? "is-active" : ""}`}
+                type="button"
+                onClick={() => setSettingsSection("about")}
+              >
+                <CheckCircle2 aria-hidden="true" />
+                关于
+              </button>
             </nav>
           </>
         ) : (
@@ -1244,13 +1252,23 @@ export function App() {
                 >
                   <X aria-hidden="true" />
                 </button>
-                <h2>{settingsSection === "background" ? "背景" : settingsSection === "loading" ? "Loading" : "行为"}</h2>
+                <h2>
+                  {settingsSection === "background"
+                    ? "背景"
+                    : settingsSection === "loading"
+                      ? "Loading"
+                      : settingsSection === "behavior"
+                        ? "行为"
+                        : "关于"}
+                </h2>
                 <p>
                   {settingsSection === "background"
                     ? "调整对话文本大框的背景颜色、图片和透明度。"
                     : settingsSection === "loading"
                       ? "选择 Claude Code 处理任务时，小 logo 位置显示的 loading 动画。"
-                      : "配置点击关闭按钮时的行为。"}
+                      : settingsSection === "behavior"
+                        ? "配置点击关闭按钮时的行为。"
+                        : "版本信息和更新检查。"}
                 </p>
               </header>
               {settingsSection === "background" ? (
@@ -1410,50 +1428,51 @@ export function App() {
                   </div>
                 </section>
               )}
-              {/* Version + updates — always visible at the bottom of settings */}
-              <section className="settings-card" aria-label="版本与更新">
-                <div className="setting-row">
-                  <span>版本</span>
-                  <span className="version-label">
-                    {appInfo?.version || "—"}
-                    {updateState === "downloaded" ? (
-                      <button
-                        className="button-primary compact"
-                        type="button"
-                        onClick={() => window.workbench?.quitAndInstall?.()}
-                      >
-                        重启更新
-                      </button>
-                    ) : (
-                      <button
-                        className="button-secondary"
-                        type="button"
-                        onClick={() => {
-                          setUpdateState("checking");
-                          window.workbench?.checkForUpdates?.();
-                        }}
-                        disabled={updateState === "checking" || updateState === "downloading"}
-                      >
-                        {updateState === "checking" || updateState === "downloading"
-                          ? "检查中…"
-                          : "检查更新"}
-                      </button>
-                    )}
-                  </span>
-                </div>
-                {updateState === "downloading" && updateInfo?.percent != null ? (
+              {settingsSection === "about" ? (
+                <section className="settings-card" aria-label="版本与更新">
                   <div className="setting-row">
-                    <span>下载进度</span>
-                    <span>{Math.round(updateInfo.percent)}%</span>
+                    <span>版本</span>
+                    <span className="version-label">
+                      {appInfo?.version || "—"}
+                      {updateState === "downloaded" ? (
+                        <button
+                          className="button-primary compact"
+                          type="button"
+                          onClick={() => window.workbench?.quitAndInstall?.()}
+                        >
+                          重启更新
+                        </button>
+                      ) : (
+                        <button
+                          className="button-secondary"
+                          type="button"
+                          onClick={() => {
+                            setUpdateState("checking");
+                            window.workbench?.checkForUpdates?.();
+                          }}
+                          disabled={updateState === "checking" || updateState === "downloading"}
+                        >
+                          {updateState === "checking" || updateState === "downloading"
+                            ? "检查中…"
+                            : "检查更新"}
+                        </button>
+                      )}
+                    </span>
                   </div>
-                ) : null}
-                {updateState === "error" && updateInfo?.message ? (
-                  <div className="setting-row">
-                    <span>更新出错</span>
-                    <span className="version-error">{updateInfo.message}</span>
-                  </div>
-                ) : null}
-              </section>
+                  {updateState === "downloading" && updateInfo?.percent != null ? (
+                    <div className="setting-row">
+                      <span>下载进度</span>
+                      <span>{Math.round(updateInfo.percent)}%</span>
+                    </div>
+                  ) : null}
+                  {updateState === "error" && updateInfo?.message ? (
+                    <div className="setting-row">
+                      <span>更新出错</span>
+                      <span className="version-error">{updateInfo.message}</span>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
             </div>
           </div>
         ) : null}
