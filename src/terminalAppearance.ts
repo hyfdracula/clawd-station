@@ -1,13 +1,12 @@
-// Match the font the user's local PowerShell uses so xterm output looks
-// identical to what they'd see running the same command in a PowerShell
-// tab. On Windows 11 that's "Cascadia Mono" (Windows Terminal default);
-// older systems fall back to Consolas / Cascadia Code / Courier New.
-// Source Han Sans SC / Noto Sans Mono CJK SC are added as fallbacks so
-// 中文 in CLI output renders in 思源黑体 instead of 仿宋.
+// Font stack: Latin glyphs use Cascadia Mono (PowerShell default), CJK
+// glyphs fall back to Noto Sans SC (思源黑体), HarmonyOS Sans SC, or
+// Microsoft YaHei (微软雅黑). The "-Mono-" variants like "Noto Sans Mono
+// CJK SC" don't ship in the basic Noto package; the SC weight variants
+// are registered without the "Mono" suffix on this machine.
 const WINDOWS_TERMINAL_FONT_FAMILY =
-  '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", "Source Han Sans SC", "Noto Sans Mono CJK SC", monospace';
+  '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", "Noto Sans SC", "HarmonyOS Sans SC", "Microsoft YaHei", monospace';
 const DEFAULT_TERMINAL_FONT_FAMILY =
-  '"Cascadia Mono", "SF Mono", Menlo, Monaco, Consolas, "Cascadia Code", "DejaVu Sans Mono", "Courier New", "Source Han Sans SC", "Noto Sans Mono CJK SC", monospace';
+  '"Cascadia Mono", "SF Mono", Menlo, Monaco, Consolas, "Cascadia Code", "DejaVu Sans Mono", "Courier New", "Noto Sans SC", "HarmonyOS Sans SC", "Microsoft YaHei", monospace';
 
 export function getTerminalFontFamily(
   platform: string = typeof navigator === "undefined" ? "" : navigator.platform
