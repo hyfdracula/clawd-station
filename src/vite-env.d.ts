@@ -114,6 +114,11 @@ interface WorkbenchInfo {
   };
 }
 
+interface AppSettings {
+  closeBehavior?: "quit" | "tray";
+  [key: string]: unknown;
+}
+
 interface Window {
   workbench?: {
     listConversations: () => Promise<WorkbenchConversation[]>;
@@ -124,6 +129,9 @@ interface Window {
     copyFiles: (conversationId: string, paths: string[]) => Promise<WorkbenchAttachment[]>;
     pickBackgroundImage: () => Promise<PickedBackgroundImage | null>;
     pickBackgroundVideo: () => Promise<PickedBackgroundVideo | null>;
+    getSettings: () => Promise<AppSettings>;
+    setCloseBehavior: (value: "quit" | "tray") => Promise<{ closeBehavior: "quit" | "tray" }>;
+    pickDirectory: () => Promise<string | null>;
     sendToClaude: (payload: {
       conversationId: string;
       prompt: string;

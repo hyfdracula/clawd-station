@@ -76,7 +76,7 @@ const statusIcon: Record<Status, ReactNode> = {
 };
 
 type AppView = "chat" | "settings";
-type SettingsSection = "background" | "loading";
+type SettingsSection = "background" | "loading" | "behavior";
 
 const loadingOptions = [
   { id: "ring", label: "Ring" },
@@ -201,23 +201,12 @@ function makeId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-// Restore the last active conversation across app restarts.
-function loadActiveId(): string {
-  try {
-    return window.localStorage.getItem("claude-workbench-active-id") ?? "";
-  } catch {
-    return "";
-  }
-}
-
-const ACTIVE_ID_STORAGE_KEY = "claude-workbench-active-id";
-
 export function App() {
   // In the desktop app, real sessions load from storage — start empty so we don't spawn
   // a throwaway placeholder terminal. The seed is only for browser-preview mode.
   const hasWorkbench = typeof window !== "undefined" && Boolean(window.workbench);
   const [conversations, setConversations] = useState<Conversation[]>(hasWorkbench ? [] : initialConversations);
-  const [activeId, setActiveId] = useState(hasWorkbench ? loadActiveId() : initialConversations[0].id);
+  const [activeId, setActiveId] = useState(hasWorkbench ? "" : initialConversations[0].id);
   const [appInfo, setAppInfo] = useState<WorkbenchInfo | null>(null);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
@@ -235,6 +224,7 @@ export function App() {
   const [completedMessageIds, setCompletedMessageIds] = useState<Set<string>>(() => new Set());
   const [engines, setEngines] = useState<EngineInfo[]>([]);
   const [showNewConversationModal, setShowNewConversationModal] = useState(false);
+  const [closeBehavior, setCloseBehavior] = useState<"quit" | "tray">("quit");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
@@ -272,18 +262,6 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem("claude-workbench-appearance", JSON.stringify(appearance));
   }, [appearance]);
-
-  // Persist active conversation so closing & reopening restores the same
-  // conversation the user was last working in (instead of dropping them on
-  // a fresh seed).
-  useEffect(() => {
-    if (!hasWorkbench) return;
-    if (activeId) {
-      window.localStorage.setItem(ACTIVE_ID_STORAGE_KEY, activeId);
-    } else {
-      window.localStorage.removeItem(ACTIVE_ID_STORAGE_KEY);
-    }
-  }, [activeId, hasWorkbench]);
 
   function splitStreamChunk(text: string) {
     const pieces: string[] = [];
@@ -414,6 +392,13 @@ export function App() {
 
     window.workbench.getAppInfo().then((info) => {
       if (mounted) setAppInfo(info);
+    });
+
+    window.workbench.getSettings().then((settings) => {
+      if (!mounted) return;
+      if (settings.closeBehavior === "tray" || settings.closeBehavior === "quit") {
+        setCloseBehavior(settings.closeBehavior);
+      }
     });
 
     const offChanged = window.workbench.onConversationsChanged((items) => {
@@ -707,6 +692,14 @@ export function App() {
       setComposerFiles([]);
     }
     showToast(`已删除「${target.title}」和本地记录`);
+  }
+
+  async function changeConversationDirectory(id: string) {
+    if (!window.workbench?.pickDirectory) return;
+    const next = await window.workbench.pickDirectory();
+    if (!next) return;
+    await window.workbench.updateConversation(id, { directory: next });
+    showToast("工作目录已更新；当前 PTY 仍跑在旧目录，新建会话会使用新目录");
   }
 
   function togglePin(id: string) {
@@ -1049,6 +1042,14 @@ export function App() {
                 <LoaderCircle aria-hidden="true" />
                 Loading
               </button>
+              <button
+                className={`settings-nav-item ${settingsSection === "behavior" ? "is-active" : ""}`}
+                type="button"
+                onClick={() => setSettingsSection("behavior")}
+              >
+                <Settings aria-hidden="true" />
+                行为
+              </button>
             </nav>
           </>
         ) : (
@@ -1163,6 +1164,16 @@ export function App() {
                 <p>
                   <FolderOpen aria-hidden="true" />
                   {activeConversation?.directory ?? "未选择目录"}
+                  {activeConversation ? (
+                    <button
+                      className="ghost-button compact directory-change"
+                      type="button"
+                      onClick={() => changeConversationDirectory(activeConversation.id)}
+                      title="修改当前会话的工作目录"
+                    >
+                      改目录
+                    </button>
+                  ) : null}
                 </p>
               </div>
             </div>
@@ -1310,7 +1321,7 @@ export function App() {
                     重置背景
                   </button>
                 </section>
-              ) : (
+              ) : settingsSection === "loading" ? (
                 <section className="settings-card" aria-label="Loading 设置">
                   <div className="loading-options" role="radiogroup" aria-label="选择 loading 动画">
                     {loadingOptions.map((option) => (
@@ -1333,6 +1344,40 @@ export function App() {
                         <strong>{option.label}</strong>
                       </button>
                     ))}
+                  </div>
+                </section>
+              ) : (
+                <section className="settings-card" aria-label="行为设置">
+                  <div className="setting-row">
+                    <span>关闭按钮</span>
+                    <div className="behavior-options" role="radiogroup" aria-label="关闭按钮行为">
+                      <button
+                        className={`loading-option ${closeBehavior === "quit" ? "is-active" : ""}`}
+                        type="button"
+                        role="radio"
+                        aria-checked={closeBehavior === "quit"}
+                        onClick={() => {
+                          setCloseBehavior("quit");
+                          void window.workbench?.setCloseBehavior?.("quit");
+                        }}
+                      >
+                        <strong>彻底退出</strong>
+                        <span>点 ✕ 直接关掉应用</span>
+                      </button>
+                      <button
+                        className={`loading-option ${closeBehavior === "tray" ? "is-active" : ""}`}
+                        type="button"
+                        role="radio"
+                        aria-checked={closeBehavior === "tray"}
+                        onClick={() => {
+                          setCloseBehavior("tray");
+                          void window.workbench?.setCloseBehavior?.("tray");
+                        }}
+                      >
+                        <strong>收起到系统托盘</strong>
+                        <span>点 ✕ 隐藏窗口，托盘图标保留</span>
+                      </button>
+                    </div>
                   </div>
                 </section>
               )}

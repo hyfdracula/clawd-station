@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog, clipboard } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, clipboard, Tray, nativeImage } = require("electron");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -121,6 +121,10 @@ let dataFile = "";
 let attachmentRoot = "";
 let sessionRoot = "";
 let appearanceRoot = "";
+let settingsFile = "";
+let appTray = null;
+let closeBehavior = "quit"; // "quit" | "tray"
+let isQuitting = false;
 let conversations = [];
 const activeClaudeRuns = new Map();
 const activeEngineRuns = new Map();
@@ -198,6 +202,20 @@ function createWindow() {
   } else {
     mainWindow.loadFile(bundledIndex || path.join(__dirname, "../dist/index.html"));
   }
+
+  // Close-button behavior: either quit (default) or minimize to system tray.
+  // In tray mode the window is hidden instead of destroyed; the user brings
+  // it back via the tray icon or context menu. isQuitting is set by the
+  // tray "彻底退出" item so we can tell the difference between an
+  // explicit quit and a hide-to-tray.
+  mainWindow.on("close", (event) => {
+    if (closeBehavior === "tray" && !isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
+
+  if (process.platform !== "darwin") createTray();
 
   if (smokeMode) {
     mainWindow.webContents.once("did-finish-load", runSmokeCheck);
@@ -290,9 +308,91 @@ function ensureStorage() {
   sessionRoot = path.join(storeDir, "sessions");
   appearanceRoot = path.join(storeDir, "appearance");
   dataFile = path.join(storeDir, "conversations.json");
+  settingsFile = path.join(storeDir, "settings.json");
   fs.mkdirSync(attachmentRoot, { recursive: true });
   fs.mkdirSync(sessionRoot, { recursive: true });
   fs.mkdirSync(appearanceRoot, { recursive: true });
+}
+
+function loadSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings(patch) {
+  const current = loadSettings();
+  const next = { ...current, ...patch };
+  try {
+    fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+    fs.writeFileSync(settingsFile, JSON.stringify(next, null, 2));
+  } catch (error) {
+    console.error("saveSettings failed", error);
+  }
+  return next;
+}
+
+function getCloseBehavior() {
+  const stored = loadSettings().closeBehavior;
+  return stored === "tray" ? "tray" : "quit";
+}
+
+function loadAppSettings() {
+  closeBehavior = getCloseBehavior();
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
+    { label: "显示 Clawd Station", click: () => focusMainWindow() },
+    { type: "separator" },
+    {
+      label: "彻底退出",
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      }
+    }
+  ]);
+}
+
+function createTray() {
+  if (appTray) return;
+  // Tray icon — small PNG. Lives in build/ alongside app icons.
+  const iconCandidates = [
+    path.join(__dirname, "..", "build", "icon.iconset", "icon_32x32.png"),
+    path.join(__dirname, "..", "build", "icon.iconset", "icon_16x16.png"),
+    path.join(__dirname, "..", "build", "icon-wizard.png")
+  ];
+  const iconPath = iconCandidates.find((candidate) => fs.existsSync(candidate));
+  let image = null;
+  if (iconPath) {
+    image = nativeImage.createFromPath(iconPath);
+    if (image.isEmpty()) image = null;
+  }
+  try {
+    appTray = new Tray(image || nativeImage.createEmpty());
+  } catch (error) {
+    console.error("tray creation failed", error);
+    return;
+  }
+  appTray.setToolTip("Clawd Station");
+  appTray.setContextMenu(buildTrayMenu());
+  appTray.on("click", () => focusMainWindow());
+  appTray.on("double-click", () => focusMainWindow());
+}
+
+function refreshTrayMenu() {
+  if (!appTray) return;
+  appTray.setContextMenu(buildTrayMenu());
 }
 
 function defaultSandboxFor(engine) {
@@ -1142,6 +1242,7 @@ function checkClaudeConnection() {
 
 app.whenReady().then(() => {
   ensureStorage();
+  loadAppSettings();
   readConversations();
   createWindow();
 
@@ -1152,8 +1253,16 @@ app.whenReady().then(() => {
   });
 });
 
+app.on("before-quit", () => {
+  isQuitting = true;
+});
+
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  // In tray mode, keep the app running even when the main window is closed
+  // (the user can re-open via the tray icon). Otherwise quit as usual.
+  if (process.platform === "darwin") return;
+  if (closeBehavior === "tray") return;
+  app.quit();
 });
 
 ipcMain.handle("conversations:list", async () => conversations);
@@ -1242,6 +1351,29 @@ ipcMain.handle("claude:send", async (_event, payload) => {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Claude Code 发送失败。" };
   }
+});
+
+// --- App settings (close behavior, etc.) ---
+
+ipcMain.handle("settings:get", async () => {
+  return loadSettings();
+});
+
+ipcMain.handle("settings:set-close-behavior", async (_event, value) => {
+  const next = value === "tray" ? "tray" : "quit";
+  closeBehavior = next;
+  saveSettings({ closeBehavior: next });
+  refreshTrayMenu();
+  return { closeBehavior: next };
+});
+
+ipcMain.handle("settings:pick-directory", async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ["openDirectory"],
+    title: "选择工作目录"
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
 });
 
 ipcMain.handle("claude:permission-answer", async (_event, { conversationId, input }) => {

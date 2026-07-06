@@ -2617,6 +2617,37 @@ textarea:focus-visible {
   position: relative;
 }
 
+/* "改目录" button next to the directory display in the workspace header.
+   Stays inline with the directory path. */
+.directory-change {
+  margin-left: var(--space-xs);
+  font-size: 0.78rem;
+  padding: 2px 8px;
+}
+
+/* Behavior options (close button: quit vs minimize-to-tray). Reuses the
+   loading-option styling for visual consistency with the other settings
+   cards. */
+.behavior-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  flex: 1;
+  min-width: 0;
+}
+.behavior-options .loading-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: var(--space-sm) var(--space-md);
+}
+.behavior-options .loading-option span {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 /* Workspace header engine strip */
 .workspace-engine-strip {
   display: inline-flex;
