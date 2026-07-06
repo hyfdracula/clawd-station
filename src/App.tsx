@@ -61,18 +61,6 @@ const initialConversations: Conversation[] = [
   }
 ];
 
-const statusText: Record<Status, string> = {
-  local: "本地记录",
-  processing: "处理中",
-  synced: "已整理"
-};
-
-const statusIcon: Record<Status, ReactNode> = {
-  local: <Archive aria-hidden="true" />,
-  processing: <Loader2 aria-hidden="true" />,
-  synced: <CheckCircle2 aria-hidden="true" />
-};
-
 type AppView = "chat" | "settings";
 type SettingsSection = "background" | "loading" | "behavior" | "about" | "record";
 
@@ -1220,14 +1208,7 @@ export function App() {
                 </p>
               </div>
             </div>
-            <div className="topbar-actions">
-              {activeConversation ? (
-                <div className={`status-pill status-${activeConversation.status}`} aria-live="polite">
-                  {statusIcon[activeConversation.status]}
-                  {statusText[activeConversation.status]}
-                </div>
-              ) : null}
-            </div>
+            <div className="topbar-actions" />
           </header>
         ) : null}
 
