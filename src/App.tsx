@@ -1153,17 +1153,32 @@ export function App() {
         )}
       </aside>
 
-      {/* Persistent X close button — top-right of the whole window.
-          Renders outside the sidebar so it floats over the entire app,
-          matching the OS window close button position. */}
+      {/* Single X — context-aware: in settings it closes settings;
+          in chat it closes the window (quit or hide-to-tray). */}
       <button
         className="icon-button window-close"
         type="button"
         onClick={() => {
-          window.workbench?.closeWindow?.();
+          if (appView === "settings") {
+            setAppView("chat");
+          } else {
+            window.workbench?.closeWindow?.();
+          }
         }}
-        aria-label={closeBehavior === "tray" ? "隐藏到托盘" : "关闭应用"}
-        title={closeBehavior === "tray" ? "隐藏到托盘" : "关闭应用"}
+        aria-label={
+          appView === "settings"
+            ? "关闭设置"
+            : closeBehavior === "tray"
+              ? "隐藏到托盘"
+              : "关闭应用"
+        }
+        title={
+          appView === "settings"
+            ? "关闭设置"
+            : closeBehavior === "tray"
+              ? "隐藏到托盘"
+              : "关闭应用"
+        }
       >
         <X aria-hidden="true" />
       </button>
@@ -1230,15 +1245,6 @@ export function App() {
           <div className="settings-page">
             <div className="settings-content">
               <header className="settings-page-header">
-                <button
-                  className="settings-back-btn"
-                  type="button"
-                  onClick={() => setAppView("chat")}
-                  aria-label="返回聊天"
-                >
-                  <ArrowLeft aria-hidden="true" />
-                  返回
-                </button>
                 <h2>
                   {settingsSection === "background"
                     ? "背景"
