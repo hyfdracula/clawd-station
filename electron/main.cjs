@@ -6,6 +6,7 @@ const path = require("path");
 const { createTerminalAnsiPassthrough } = require("./terminal-ansi.cjs");
 const engines = require("./engines.cjs");
 const { ENGINES, getEngine } = engines;
+const { setupAutoUpdater, checkForUpdatesSilently, quitAndInstall, getCurrentVersion } = require("./updater.cjs");
 
 let pty = null;
 try {
@@ -1277,6 +1278,12 @@ app.whenReady().then(() => {
   readConversations();
   createWindow();
 
+  // Wire the updater against the live window so it can send events.
+  setupAutoUpdater(() => mainWindow);
+
+  // Check for updates after a short delay so the window is fully drawn.
+  setTimeout(() => checkForUpdatesSilently(), 3000);
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     openFinderFolderSession();
@@ -1411,6 +1418,16 @@ ipcMain.handle("settings:set-close-behavior", async (_event, value) => {
   return { closeBehavior: next };
 });
 
+// --- Auto-updater ---
+
+ipcMain.handle("updater:check", async () => {
+  checkForUpdatesSilently();
+});
+
+ipcMain.handle("updater:quit-and-install", async () => {
+  quitAndInstall();
+});
+
 ipcMain.handle("settings:pick-directory", async () => {
   const result = await dialog.showOpenDialog({
     properties: ["openDirectory"],
@@ -1458,6 +1475,7 @@ ipcMain.handle("app:info", async () => ({
   attachmentRoot,
   sessionRoot,
   homeDir: app.getPath("home"),
+  version: getCurrentVersion() || app.getVersion(),
   claudeCommand: claudeCommandLabel,
   mockClaude,
   claudeConnection: await checkClaudeConnection()

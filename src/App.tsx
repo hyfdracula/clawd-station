@@ -189,6 +189,9 @@ export function App() {
   const [engines, setEngines] = useState<EngineInfo[]>([]);
   const [showNewConversationModal, setShowNewConversationModal] = useState(false);
   const [closeBehavior, setCloseBehavior] = useState<"quit" | "tray">("quit");
+  // Auto-updater state — shown in settings and as toast
+  const [updateState, setUpdateState] = useState<"idle" | "checking" | "available" | "downloading" | "downloaded" | "error">("idle");
+  const [updateInfo, setUpdateInfo] = useState<UpdaterEvent | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
@@ -507,6 +510,45 @@ export function App() {
       void openConversationInDirectory(directory);
     });
 
+    // --- Auto-updater listeners (displayed in settings + toast) ---
+
+    const offUpdaterChecking = window.workbench.onUpdaterChecking
+      ? window.workbench.onUpdaterChecking(() => setUpdateState("checking"))
+      : () => {};
+
+    const offUpdaterAvailable = window.workbench.onUpdaterAvailable
+      ? window.workbench.onUpdaterAvailable((event) => {
+          setUpdateState("downloading");
+          setUpdateInfo(event);
+        })
+      : () => {};
+
+    const offUpdaterProgress = window.workbench.onUpdaterProgress
+      ? window.workbench.onUpdaterProgress((event) => {
+          setUpdateState("downloading");
+          setUpdateInfo(event);
+        })
+      : () => {};
+
+    const offUpdaterDownloaded = window.workbench.onUpdaterDownloaded
+      ? window.workbench.onUpdaterDownloaded((event) => {
+          setUpdateState("downloaded");
+          setUpdateInfo(event);
+          showToast(`新版 v${event.version || ""} 已就绪，重启生效`);
+        })
+      : () => {};
+
+    const offUpdaterNotAvailable = window.workbench.onUpdaterNotAvailable
+      ? window.workbench.onUpdaterNotAvailable(() => setUpdateState("idle"))
+      : () => {};
+
+    const offUpdaterError = window.workbench.onUpdaterError
+      ? window.workbench.onUpdaterError((event) => {
+          setUpdateState("error");
+          setUpdateInfo(event);
+        })
+      : () => {};
+
     window.workbench.notifyReady();
 
     // Global keyboard handler: only copies selected text from non-editable
@@ -544,6 +586,12 @@ export function App() {
       offEngineDone();
       offEngineError();
       offEngineSessionId();
+      offUpdaterChecking();
+      offUpdaterAvailable();
+      offUpdaterProgress();
+      offUpdaterDownloaded();
+      offUpdaterNotAvailable();
+      offUpdaterError();
       offOpenDirectory();
       streamTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       streamTimersRef.current.clear();
@@ -1362,6 +1410,50 @@ export function App() {
                   </div>
                 </section>
               )}
+              {/* Version + updates — always visible at the bottom of settings */}
+              <section className="settings-card" aria-label="版本与更新">
+                <div className="setting-row">
+                  <span>版本</span>
+                  <span className="version-label">
+                    {appInfo?.version || "—"}
+                    {updateState === "downloaded" ? (
+                      <button
+                        className="button-primary compact"
+                        type="button"
+                        onClick={() => window.workbench?.quitAndInstall?.()}
+                      >
+                        重启更新
+                      </button>
+                    ) : (
+                      <button
+                        className="button-secondary"
+                        type="button"
+                        onClick={() => {
+                          setUpdateState("checking");
+                          window.workbench?.checkForUpdates?.();
+                        }}
+                        disabled={updateState === "checking" || updateState === "downloading"}
+                      >
+                        {updateState === "checking" || updateState === "downloading"
+                          ? "检查中…"
+                          : "检查更新"}
+                      </button>
+                    )}
+                  </span>
+                </div>
+                {updateState === "downloading" && updateInfo?.percent != null ? (
+                  <div className="setting-row">
+                    <span>下载进度</span>
+                    <span>{Math.round(updateInfo.percent)}%</span>
+                  </div>
+                ) : null}
+                {updateState === "error" && updateInfo?.message ? (
+                  <div className="setting-row">
+                    <span>更新出错</span>
+                    <span className="version-error">{updateInfo.message}</span>
+                  </div>
+                ) : null}
+              </section>
             </div>
           </div>
         ) : null}

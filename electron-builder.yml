@@ -13,10 +13,13 @@ files:
   - "!dist/win-unpacked/**"
   - "!dist/Clawd Station-*.exe"
   - "!dist/Clawd Station-*.exe.blockmap"
-  - "!dist/latest.yml"
   - "!**/*.map"
   - "!**/.DS_Store"
 asar: true
+publish:
+  provider: github
+  owner: hyfdracula
+  repo: clawd-station
 extraMetadata:
   main: electron/main.cjs
 

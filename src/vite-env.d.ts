@@ -107,12 +107,23 @@ interface WorkbenchInfo {
   attachmentRoot: string;
   sessionRoot?: string;
   homeDir?: string;
+  version?: string;
   claudeCommand: string;
   mockClaude: boolean;
   claudeConnection?: {
     connected: boolean;
     detail: string;
   };
+}
+
+interface UpdaterEvent {
+  version?: string;
+  releaseDate?: string;
+  percent?: number;
+  bytesPerSecond?: number;
+  total?: number;
+  transferred?: number;
+  message?: string;
 }
 
 interface AppSettings {
@@ -141,6 +152,8 @@ interface Window {
     pickBackgroundVideo: () => Promise<PickedBackgroundVideo | null>;
     getSettings: () => Promise<AppSettings>;
     setSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+    checkForUpdates: () => Promise<void>;
+    quitAndInstall: () => Promise<void>;
     setCloseBehavior: (value: "quit" | "tray") => Promise<{ closeBehavior: "quit" | "tray" }>;
     pickDirectory: () => Promise<string | null>;
     sendToClaude: (payload: {
@@ -171,6 +184,12 @@ interface Window {
     onEngineDone: (callback: (event: ClaudeChunkEvent) => void) => () => void;
     onEngineError: (callback: (event: ClaudeChunkEvent) => void) => () => void;
     onEngineSessionId: (callback: (event: EngineSessionIdEvent) => void) => () => void;
+    onUpdaterChecking: (callback: () => void) => () => void;
+    onUpdaterAvailable: (callback: (event: UpdaterEvent) => void) => () => void;
+    onUpdaterProgress: (callback: (event: UpdaterEvent) => void) => () => void;
+    onUpdaterDownloaded: (callback: (event: UpdaterEvent) => void) => () => void;
+    onUpdaterNotAvailable: (callback: () => void) => () => void;
+    onUpdaterError: (callback: (event: UpdaterEvent) => void) => () => void;
     onSelectMessageContent: (callback: (event: SelectMessageContentEvent) => void) => () => void;
     onCopyMessageContent: (callback: (event: SelectMessageContentEvent) => void) => () => void;
     terminalStart: (opts: { id: string; cwd?: string; cols?: number; rows?: number; autoRun?: string }) => Promise<{ ok: boolean; error?: string }>;
