@@ -1028,17 +1028,6 @@ export function App() {
           <div className="sidebar-media-overlay" />
         </div>
         <div className="window-drag" />
-        <button
-          className="icon-button settings-close"
-          type="button"
-          onClick={() => {
-            window.workbench?.closeWindow?.();
-          }}
-          aria-label={closeBehavior === "tray" ? "隐藏到托盘" : "关闭应用"}
-          title={closeBehavior === "tray" ? "隐藏到托盘" : "关闭应用"}
-        >
-          <X aria-hidden="true" />
-        </button>
         {appView === "settings" ? (
           <>
             <label className="search-field">
@@ -1170,6 +1159,21 @@ export function App() {
           </>
         )}
       </aside>
+
+      {/* Persistent X close button — top-right of the whole window.
+          Renders outside the sidebar so it floats over the entire app,
+          matching the OS window close button position. */}
+      <button
+        className="icon-button window-close"
+        type="button"
+        onClick={() => {
+          window.workbench?.closeWindow?.();
+        }}
+        aria-label={closeBehavior === "tray" ? "隐藏到托盘" : "关闭应用"}
+        title={closeBehavior === "tray" ? "隐藏到托盘" : "关闭应用"}
+      >
+        <X aria-hidden="true" />
+      </button>
 
       <section className="workspace" aria-label={appView === "settings" ? "设置" : "当前会话"}>
         {/* Chat view stays mounted at all times — the settings panel overlays
