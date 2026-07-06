@@ -1414,6 +1414,7 @@ ipcMain.handle("app:info", async () => ({
   storeDir,
   attachmentRoot,
   sessionRoot,
+  homeDir: app.getPath("home"),
   claudeCommand: claudeCommandLabel,
   mockClaude,
   claudeConnection: await checkClaudeConnection()

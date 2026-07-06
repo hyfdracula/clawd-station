@@ -2504,6 +2504,53 @@ textarea:focus-visible {
   gap: var(--space-xs);
 }
 
+/* Working-directory picker shown at the top of the new-conversation modal. */
+.directory-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+.directory-picker-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface-quiet);
+  border: 1px solid var(--surface-soft);
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), border-color 120ms var(--ease-out);
+  min-width: 0;
+  flex: 1 1 200px;
+}
+.directory-picker-current:hover {
+  background: var(--primary-quiet);
+  border-color: var(--primary-soft);
+}
+.directory-picker-current svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.directory-picker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.directory-picker-actions {
+  display: inline-flex;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+.directory-picker-hint {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
 .sandbox-option {
   text-align: left;
   padding: var(--space-sm) var(--space-md);
@@ -2623,6 +2670,46 @@ textarea:focus-visible {
   margin-left: var(--space-xs);
   font-size: 0.78rem;
   padding: 2px 8px;
+}
+
+/* Clickable working-directory chip in the workspace header. Shows the
+   directory's basename (or "工作目录" for the home dir); the trailing
+   pencil icon hints at editability. */
+.directory-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  margin-left: 4px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), border-color 120ms var(--ease-out);
+}
+.directory-link:hover {
+  background: var(--primary-quiet);
+  border-color: var(--primary-soft);
+}
+.directory-link-name {
+  font-weight: 500;
+}
+.directory-link-edit {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.directory-link:hover .directory-link-edit {
+  color: var(--primary);
+}
+.directory-link-muted {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 /* Behavior options (close button: quit vs minimize-to-tray). Reuses the

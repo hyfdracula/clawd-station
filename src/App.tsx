@@ -196,6 +196,19 @@ export function App() {
   const chatRgb = hexToRgb(appearance.chatBackground);
   const chatOpacity = appearance.chatOpacity / 100;
   const hasVisualBackground = Boolean(appearance.chatImageUrl || appearance.chatVideoUrl);
+
+  // Render a working-directory label for the workspace header. The
+  // home directory itself is hidden behind a generic "工作目录" chip
+  // since the full path is noisy; any other directory shows its
+  // basename so the active project is recognizable.
+  function formatWorkingDirectory(directory: string | undefined): string {
+    if (!directory) return "工作目录";
+    const normalized = directory.replace(/[\\/]+$/, "");
+    if (!normalized) return "工作目录";
+    if (appInfo && normalized === appInfo.homeDir) return "工作目录";
+    const segments = normalized.split(/[\\/]/).filter(Boolean);
+    return segments[segments.length - 1] || normalized;
+  }
   const appStyle = {
     "--custom-chat-background": `rgb(${chatRgb.r} ${chatRgb.g} ${chatRgb.b} / ${hasVisualBackground ? 1 : chatOpacity})`,
     "--custom-chat-background-overlay": `rgb(${chatRgb.r} ${chatRgb.g} ${chatRgb.b} / ${hasVisualBackground ? 1 - chatOpacity : 0})`,
@@ -547,10 +560,14 @@ export function App() {
     setShowNewConversationModal(true);
   }
 
-  async function confirmNewConversation(engine: Engine, sandbox: Sandbox) {
+  async function confirmNewConversation(engine: Engine, sandbox: Sandbox, directory: string) {
     setShowNewConversationModal(false);
     if (window.workbench) {
-      const items = await window.workbench.createConversation({ engine, sandbox });
+      const items = await window.workbench.createConversation({
+        engine,
+        sandbox,
+        directory: directory || undefined
+      });
       setConversations(items);
       setActiveId(items[0]?.id ?? "");
       setDraft("");
@@ -565,7 +582,7 @@ export function App() {
       opencodeSessionId: engine === "opencode" ? makeId("opencode") : undefined,
       title: "新会话",
       updatedAt: "刚刚",
-      directory: "~",
+      directory: directory || "~",
       status: "local",
       pinned: false,
       attachments: [],
@@ -1097,17 +1114,21 @@ export function App() {
                 </h2>
                 <p>
                   <FolderOpen aria-hidden="true" />
-                  {activeConversation?.directory ?? "未选择目录"}
                   {activeConversation ? (
                     <button
-                      className="ghost-button compact directory-change"
+                      className="directory-link"
                       type="button"
                       onClick={() => changeConversationDirectory(activeConversation.id)}
-                      title="修改当前会话的工作目录"
+                      title={`当前工作目录：${activeConversation.directory ?? ""}\n点击修改`}
                     >
-                      改目录
+                      <span className="directory-link-name">
+                        {formatWorkingDirectory(activeConversation.directory)}
+                      </span>
+                      <PencilLine aria-hidden="true" className="directory-link-edit" />
                     </button>
-                  ) : null}
+                  ) : (
+                    <span className="directory-link-muted">工作目录</span>
+                  )}
                 </p>
               </div>
             </div>
@@ -1380,7 +1401,10 @@ export function App() {
       {showNewConversationModal && engines.length > 0 ? (
         <NewConversationModal
           engines={engines}
-          onConfirm={(engine, sandbox) => void confirmNewConversation(engine, sandbox)}
+          homeDir={appInfo?.homeDir}
+          onConfirm={(engine, sandbox, directory) =>
+            void confirmNewConversation(engine, sandbox, directory)
+          }
           onCancel={() => setShowNewConversationModal(false)}
         />
       ) : null}

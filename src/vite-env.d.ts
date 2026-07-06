@@ -106,6 +106,7 @@ interface WorkbenchInfo {
   storeDir: string;
   attachmentRoot: string;
   sessionRoot?: string;
+  homeDir?: string;
   claudeCommand: string;
   mockClaude: boolean;
   claudeConnection?: {
