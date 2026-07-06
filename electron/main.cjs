@@ -366,11 +366,12 @@ function buildTrayMenu() {
 
 function createTray() {
   if (appTray) return;
-  // Tray icon — small PNG. Lives in build/ alongside app icons.
+  // Tray icon — prefer .ico (Windows honors alpha + small format) over PNG.
+  // The .ico is a PNG-payload ICO generated from the wizard art.
   const iconCandidates = [
+    path.join(__dirname, "..", "build", "tray.ico"),
     path.join(__dirname, "..", "build", "icon.iconset", "icon_32x32.png"),
-    path.join(__dirname, "..", "build", "icon.iconset", "icon_16x16.png"),
-    path.join(__dirname, "..", "build", "icon-wizard.png")
+    path.join(__dirname, "..", "build", "icon.iconset", "icon_16x16.png")
   ];
   const iconPath = iconCandidates.find((candidate) => fs.existsSync(candidate));
   let image = null;

@@ -8,6 +8,7 @@ files:
   - electron/**/*
   - dist/**/*
   - build/icon.iconset/**/*
+  - build/tray.ico
   - package.json
   - "!dist/win-unpacked/**"
   - "!dist/Clawd Station-*.exe"
