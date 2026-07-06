@@ -1231,12 +1231,13 @@ export function App() {
             <div className="settings-content">
               <header className="settings-page-header">
                 <button
-                  className="icon-button settings-close"
+                  className="settings-back-btn"
                   type="button"
                   onClick={() => setAppView("chat")}
-                  aria-label="关闭设置"
+                  aria-label="返回聊天"
                 >
-                  <X aria-hidden="true" />
+                  <ArrowLeft aria-hidden="true" />
+                  返回
                 </button>
                 <h2>
                   {settingsSection === "background"
