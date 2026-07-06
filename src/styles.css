@@ -2604,6 +2604,19 @@ textarea:focus-visible {
   background-color: #000000 !important;
 }
 
+/* Settings overlay — sits above the always-mounted terminal shell so xterm
+   and node-pty survive a settings visit (they used to be unmounted). */
+.workspace > .settings-page {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: var(--bg);
+  overflow: auto;
+}
+.workspace {
+  position: relative;
+}
+
 /* Workspace header engine strip */
 .workspace-engine-strip {
   display: inline-flex;

@@ -1118,6 +1118,67 @@ export function App() {
       </aside>
 
       <section className="workspace" aria-label={appView === "settings" ? "设置" : "当前会话"}>
+        {/* Chat view stays mounted at all times — the settings panel overlays
+            it. Keeping TerminalDeck (xterm + node-pty) mounted means the
+            Codex / OpenCode / Claude Code sessions survive a settings visit
+            instead of being torn down and re-spawned on every toggle. */}
+        {appView === "chat" ? (
+          <header className="topbar">
+            <div className="topbar-title">
+              <div>
+                <h2>
+                  {activeConversation?.title ?? "没有会话"}
+                  {activeConversation ? (
+                    <span className="workspace-engine-strip" title={`引擎: ${engineLabel(activeConversation.engine)} · 权限: ${activeConversation.sandbox || "default"}`}>
+                      <EngineBadge engine={activeConversation.engine} size="md" />
+                      <span>{engineLabel(activeConversation.engine)}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{activeConversation.sandbox || "default"}</span>
+                    </span>
+                  ) : null}
+                </h2>
+                <p>
+                  <FolderOpen aria-hidden="true" />
+                  {activeConversation?.directory ?? "未选择目录"}
+                </p>
+              </div>
+            </div>
+            <div className="topbar-actions">
+              {activeConversation ? (
+                <div className={`status-pill status-${activeConversation.status}`} aria-live="polite">
+                  {statusIcon[activeConversation.status]}
+                  {statusText[activeConversation.status]}
+                </div>
+              ) : null}
+              {inspectorCollapsed ? (
+                <button
+                  className="ghost-button compact topbar-inspector-toggle"
+                  type="button"
+                  onClick={() => setInspectorCollapsed(false)}
+                  aria-label="展开本地会话信息"
+                  title="展开"
+                >
+                  <ChevronLeft aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+          </header>
+        ) : null}
+
+        <div className="conversation-shell terminal-shell">
+          <TerminalDeck
+            activeId={activeConversation?.id ?? ""}
+            sessions={sortedConversations.map((conversation) => ({
+              id: conversation.id,
+              cwd: conversation.directory || "~",
+              engine: conversation.engine
+            }))}
+          />
+          <input ref={fileInputRef} className="hidden-input" type="file" multiple onChange={handleBrowserFiles} />
+        </div>
+
+        {/* Settings overlay — sits above the (always-mounted) terminal shell.
+            Keeps xterm + node-pty alive across settings visits. */}
         {appView === "settings" ? (
           <div className="settings-page">
             <div className="settings-content">
@@ -1254,62 +1315,7 @@ export function App() {
               )}
             </div>
           </div>
-        ) : (
-          <>
-            <header className="topbar">
-              <div className="topbar-title">
-                <div>
-                  <h2>
-                    {activeConversation?.title ?? "没有会话"}
-                    {activeConversation ? (
-                      <span className="workspace-engine-strip" title={`引擎: ${engineLabel(activeConversation.engine)} · 权限: ${activeConversation.sandbox || "default"}`}>
-                        <EngineBadge engine={activeConversation.engine} size="md" />
-                        <span>{engineLabel(activeConversation.engine)}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{activeConversation.sandbox || "default"}</span>
-                      </span>
-                    ) : null}
-                  </h2>
-                  <p>
-                    <FolderOpen aria-hidden="true" />
-                    {activeConversation?.directory ?? "未选择目录"}
-                  </p>
-                </div>
-              </div>
-              <div className="topbar-actions">
-                {activeConversation ? (
-                  <div className={`status-pill status-${activeConversation.status}`} aria-live="polite">
-                    {statusIcon[activeConversation.status]}
-                    {statusText[activeConversation.status]}
-                  </div>
-                ) : null}
-                {inspectorCollapsed ? (
-                  <button
-                    className="ghost-button compact topbar-inspector-toggle"
-                    type="button"
-                    onClick={() => setInspectorCollapsed(false)}
-                    aria-label="展开本地会话信息"
-                    title="展开"
-                  >
-                    <ChevronLeft aria-hidden="true" />
-                  </button>
-                ) : null}
-              </div>
-            </header>
-
-            <div className="conversation-shell terminal-shell">
-              <TerminalDeck
-                activeId={activeConversation?.id ?? ""}
-                sessions={sortedConversations.map((conversation) => ({
-                  id: conversation.id,
-                  cwd: conversation.directory || "~",
-                  engine: conversation.engine
-                }))}
-              />
-              <input ref={fileInputRef} className="hidden-input" type="file" multiple onChange={handleBrowserFiles} />
-            </div>
-          </>
-        )}
+        ) : null}
       </section>
 
       <aside className="inspector" aria-label="本地会话信息" aria-expanded={!inspectorCollapsed}>
