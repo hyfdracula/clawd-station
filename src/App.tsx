@@ -201,12 +201,23 @@ function makeId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+// Restore the last active conversation across app restarts.
+function loadActiveId(): string {
+  try {
+    return window.localStorage.getItem("claude-workbench-active-id") ?? "";
+  } catch {
+    return "";
+  }
+}
+
+const ACTIVE_ID_STORAGE_KEY = "claude-workbench-active-id";
+
 export function App() {
   // In the desktop app, real sessions load from storage — start empty so we don't spawn
   // a throwaway placeholder terminal. The seed is only for browser-preview mode.
   const hasWorkbench = typeof window !== "undefined" && Boolean(window.workbench);
   const [conversations, setConversations] = useState<Conversation[]>(hasWorkbench ? [] : initialConversations);
-  const [activeId, setActiveId] = useState(hasWorkbench ? "" : initialConversations[0].id);
+  const [activeId, setActiveId] = useState(hasWorkbench ? loadActiveId() : initialConversations[0].id);
   const [appInfo, setAppInfo] = useState<WorkbenchInfo | null>(null);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
@@ -261,6 +272,18 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem("claude-workbench-appearance", JSON.stringify(appearance));
   }, [appearance]);
+
+  // Persist active conversation so closing & reopening restores the same
+  // conversation the user was last working in (instead of dropping them on
+  // a fresh seed).
+  useEffect(() => {
+    if (!hasWorkbench) return;
+    if (activeId) {
+      window.localStorage.setItem(ACTIVE_ID_STORAGE_KEY, activeId);
+    } else {
+      window.localStorage.removeItem(ACTIVE_ID_STORAGE_KEY);
+    }
+  }, [activeId, hasWorkbench]);
 
   function splitStreamChunk(text: string) {
     const pieces: string[] = [];
