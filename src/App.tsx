@@ -74,7 +74,7 @@ const statusIcon: Record<Status, ReactNode> = {
 };
 
 type AppView = "chat" | "settings";
-type SettingsSection = "background" | "loading" | "behavior" | "about";
+type SettingsSection = "background" | "loading" | "behavior" | "about" | "record";
 
 const loadingOptions = [
   { id: "ring", label: "Ring" },
@@ -178,7 +178,6 @@ export function App() {
   const [renameValue, setRenameValue] = useState("");
   const [toast, setToast] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [appView, setAppView] = useState<AppView>("chat");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("background");
   // Appearance starts from a local default, then gets hydrated from
@@ -999,9 +998,7 @@ export function App() {
 
   return (
     <main
-      className={`app-shell ${appView === "settings" ? "settings-view" : ""} ${dragging ? "is-dragging" : ""} ${
-        inspectorCollapsed ? "inspector-collapsed" : ""
-      }`}
+      className={`app-shell ${appView === "settings" ? "settings-view" : ""} ${dragging ? "is-dragging" : ""}`}
       style={appStyle}
       onDragEnter={(event) => {
         event.preventDefault();
@@ -1068,6 +1065,14 @@ export function App() {
               >
                 <CheckCircle2 aria-hidden="true" />
                 关于
+              </button>
+              <button
+                className={`settings-nav-item ${settingsSection === "record" ? "is-active" : ""}`}
+                type="button"
+                onClick={() => setSettingsSection("record")}
+              >
+                <Archive aria-hidden="true" />
+                本地记录
               </button>
             </nav>
           </>
@@ -1222,17 +1227,6 @@ export function App() {
                   {statusText[activeConversation.status]}
                 </div>
               ) : null}
-              {inspectorCollapsed ? (
-                <button
-                  className="ghost-button compact topbar-inspector-toggle"
-                  type="button"
-                  onClick={() => setInspectorCollapsed(false)}
-                  aria-label="展开本地会话信息"
-                  title="展开"
-                >
-                  <ChevronLeft aria-hidden="true" />
-                </button>
-              ) : null}
             </div>
           </header>
         ) : null}
@@ -1270,7 +1264,9 @@ export function App() {
                       ? "Loading"
                       : settingsSection === "behavior"
                         ? "行为"
-                        : "关于"}
+                        : settingsSection === "about"
+                          ? "关于"
+                          : "本地记录"}
                 </h2>
                 <p>
                   {settingsSection === "background"
@@ -1279,7 +1275,9 @@ export function App() {
                       ? "选择 Claude Code 处理任务时，小 logo 位置显示的 loading 动画。"
                       : settingsSection === "behavior"
                         ? "配置点击关闭按钮时的行为。"
-                        : "版本信息和更新检查。"}
+                        : settingsSection === "about"
+                          ? "版本信息和更新检查。"
+                          : "当前会话的本地状态和元数据。"}
                 </p>
               </header>
               {settingsSection === "background" ? (
@@ -1482,57 +1480,43 @@ export function App() {
                     </div>
                   ) : null}
                 </section>
+              ) : settingsSection === "record" ? (
+                <>
+                  <section className="settings-card" aria-label="发送预览">
+                    <div className="setting-row">
+                      <span>工作目录</span>
+                      <span>{activeConversation?.directory ?? "~"}</span>
+                    </div>
+                    <p className="muted">发送时会附带当前工作目录和待发送附件路径。</p>
+                  </section>
+                  <section className="settings-card" aria-label="会话状态">
+                    <ul className="status-list">
+                      <li>
+                        <span>本地 transcript</span>
+                        <strong>{activeConversation?.messages.length ?? 0} 条</strong>
+                      </li>
+                      <li>
+                        <span>附件记录</span>
+                        <strong>{activeConversation?.attachments.length ?? 0} 个</strong>
+                      </li>
+                      <li>
+                        <span>置顶</span>
+                        <strong>{activeConversation?.pinned ? "是" : "否"}</strong>
+                      </li>
+                    </ul>
+                  </section>
+                  <section className="settings-card" aria-label="终端 Claude Code">
+                    <div className="setting-row">
+                      <span>CLI 路径</span>
+                      <span>{appInfo?.claudeCommand ?? "浏览器预览模式"}</span>
+                    </div>
+                  </section>
+                </>
               ) : null}
             </div>
           </div>
         ) : null}
       </section>
-
-      <aside className="inspector" aria-label="本地会话信息" aria-expanded={!inspectorCollapsed}>
-        <header>
-          <p className="eyebrow">Local session</p>
-          <button
-            className="ghost-button compact inspector-toggle"
-            type="button"
-            onClick={() => setInspectorCollapsed((value) => !value)}
-            aria-label={inspectorCollapsed ? "展开本地会话信息" : "收起本地会话信息"}
-            title={inspectorCollapsed ? "展开" : "收起"}
-          >
-            {inspectorCollapsed ? <ChevronLeft aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
-          </button>
-        </header>
-        <div className="inspector-body" aria-hidden={inspectorCollapsed}>
-          <section>
-            <h3>发送预览</h3>
-            <div className="path-preview">
-              <ChevronDown aria-hidden="true" />
-              <span>{activeConversation?.directory ?? "~"}</span>
-            </div>
-            <p className="muted">发送时会附带当前工作目录和待发送附件路径。</p>
-          </section>
-          <section>
-            <h3>会话状态</h3>
-            <ul className="status-list">
-              <li>
-                <span>本地 transcript</span>
-                <strong>{activeConversation?.messages.length ?? 0} 条</strong>
-              </li>
-              <li>
-                <span>附件记录</span>
-                <strong>{activeConversation?.attachments.length ?? 0} 个</strong>
-              </li>
-              <li>
-                <span>置顶</span>
-                <strong>{activeConversation?.pinned ? "是" : "否"}</strong>
-              </li>
-            </ul>
-          </section>
-          <section>
-            <h3>终端 Claude Code</h3>
-            <p className="muted">{appInfo?.claudeCommand ?? "浏览器预览模式"}</p>
-          </section>
-        </div>
-      </aside>
 
       {dragging ? (
         <div className="drop-overlay" aria-hidden="true">
