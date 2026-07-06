@@ -120,12 +120,14 @@ const ENGINES = {
     buildArgs({ prompt, cwd, sandbox, sessionId, attachments }) {
       // Attachments go in as plain prompt text (mirrors existing Clawd Station behavior).
       // --append-system-prompt is kept for persona consistency with prior releases.
+      // Session persistence: when we already have a sessionId for this conversation,
+      // --resume picks it up. Otherwise Claude Code auto-persists and emits the new
+      // session id in the system/result events, which we capture and save back.
       const args = [
         "-p",
         prompt,
         "--verbose",
         "--safe-mode",
-        "--no-session-persistence",
         "--append-system-prompt",
         "你正在 Clawd Station 桌面壳中运行。请以 Claude Code/Claude 的身份回答，不要自称 Kiro，也不要引用 Kiro 开发环境的身份说明，除非用户明确询问 Kiro。输出给用户的正文不要使用 Markdown 标题井号 #，也不要使用星号 * 或 ** 做加粗/斜体；需要分段时直接写自然段，列表优先用数字编号或普通短横线。",
         "--output-format",

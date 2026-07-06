@@ -61,7 +61,10 @@ test("claude buildArgs produces Claude CLI flags", () => {
   assert.ok(args.includes("--permission-mode"));
   assert.ok(args.includes("default"));
   assert.ok(args.includes("--safe-mode"));
-  assert.ok(args.includes("--no-session-persistence"));
+  // Session persistence is on by default — --resume is added only when
+  // we already have a sessionId for this conversation.
+  assert.ok(!args.includes("--no-session-persistence"));
+  assert.ok(!args.includes("--resume"));
   // No --resume when sessionId is null
   assert.ok(!args.includes("--resume"));
 });

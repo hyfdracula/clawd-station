@@ -592,6 +592,22 @@ function extractStreamText(line) {
   }
 }
 
+// Pull a Claude Code session id out of a stream-json line. Claude emits
+// session_id on a few event types — `system`/`init` at startup and
+// `result` at completion. The renderer gets the new id and stores it on
+// the conversation so the next send can --resume.
+function extractClaudeSessionId(line) {
+  if (!line || !line.trim()) return "";
+  try {
+    const event = JSON.parse(line);
+    if (typeof event.session_id === "string" && event.session_id) return event.session_id;
+    if (event.type === "system" && event.subtype === "init" && typeof event.session_id === "string") {
+      return event.session_id;
+    }
+  } catch {}
+  return "";
+}
+
 function parsePermissionPrompt(text) {
   const clean = cleanRunnerOutput(text).replace(/\r/g, "\n");
   if (!clean) return null;
@@ -890,7 +906,6 @@ function runClaude({ conversationId, prompt, attachments }) {
     claudePrompt,
     "--verbose",
     "--safe-mode",
-    "--no-session-persistence",
     "--append-system-prompt",
     "你正在 Clawd Station 桌面壳中运行。请以 Claude Code/Claude 的身份回答，不要自称 Kiro，也不要引用 Kiro 开发环境的身份说明，除非用户明确询问 Kiro。输出给用户的正文不要使用 Markdown 标题井号 #，也不要使用星号 * 或 ** 做加粗/斜体；需要分段时直接写自然段，列表优先用数字编号或普通短横线。",
     "--output-format",
@@ -899,6 +914,11 @@ function runClaude({ conversationId, prompt, attachments }) {
     "--permission-mode",
     "default",
   ];
+  // Persist the underlying Claude session so future sends can --resume it
+  // and keep the conversation context across runs.
+  if (conversation.claudeSessionId) {
+    args.push("--resume", conversation.claudeSessionId);
+  }
 
   const child = spawn(
     claudeExecutable,
@@ -938,6 +958,16 @@ function runClaude({ conversationId, prompt, attachments }) {
     for (const line of lines) {
       if (!line.trim()) continue;
       if (isIgnorableClaudeWarning(line)) continue;
+      // Capture session id from system/result events so future sends can
+      // --resume and keep the conversation context.
+      const newSid = extractClaudeSessionId(line);
+      if (newSid) {
+        updateConversation(conversationId, (current) =>
+          current.claudeSessionId === newSid
+            ? current
+            : { ...current, claudeSessionId: newSid }
+        );
+      }
       const chunk = extractStreamText(line);
       if (!chunk.trim()) continue;
       updateConversation(conversationId, (current) => ({
