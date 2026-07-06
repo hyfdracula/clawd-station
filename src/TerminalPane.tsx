@@ -75,13 +75,11 @@ function TerminalView({ id, cwd, active, engine }: { id: string; cwd: string; ac
             .then(() => ({ ok: true }))
             .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Clipboard write failed" }));
         },
-        readText: () => {
-          if (wb?.clipboardReadText) return wb.clipboardReadText();
-          return navigator.clipboard
+        readText: () =>
+          navigator.clipboard
             .readText()
             .then((text) => ({ ok: true, text }))
-            .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Clipboard read failed" }));
-        }
+            .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Clipboard read failed" }))
       })
     );
 

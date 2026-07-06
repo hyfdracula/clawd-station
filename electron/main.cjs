@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog, clipboard, Tray, nativeImage } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, Tray, nativeImage } = require("electron");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -1400,16 +1400,6 @@ ipcMain.handle("engine:send", async (_event, payload) => {
   }
 });
 
-ipcMain.handle("engine:permission-answer", async (_event, { conversationId, input }) => {
-  const run = activeEngineRuns.get(conversationId);
-  if (!run || run.child.killed || !run.child.stdin?.writable) {
-    return { ok: false, error: "当前没有等待输入的引擎进程。" };
-  }
-  run.awaitingPermission = false;
-  run.child.stdin.write(input || "\n");
-  return { ok: true };
-});
-
 ipcMain.handle("engines:list", async () =>
   Object.entries(ENGINES).map(([key, engine]) => ({
     key,
@@ -1434,27 +1424,6 @@ function sendToRenderer(channel, payload) {
     mainWindow.webContents.send(channel, payload);
   }
 }
-
-function safeWindowOp(op) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  try { op(mainWindow); } catch (error) { console.error("window control failed:", error && error.message); }
-}
-
-ipcMain.handle("window:minimize", () => { safeWindowOp((win) => win.minimize()); return { ok: true }; });
-ipcMain.handle("window:toggle-maximize", () => {
-  safeWindowOp((win) => { if (win.isMaximized()) win.unmaximize(); else win.maximize(); });
-  return { ok: true, maximized: mainWindow?.isMaximized() ?? false };
-});
-ipcMain.handle("window:close", () => { safeWindowOp((win) => win.close()); return { ok: true }; });
-
-ipcMain.handle("clipboard:write-text", (_event, text) => {
-  try { clipboard.writeText(typeof text === "string" ? text : ""); return { ok: true }; }
-  catch (error) { return { ok: false, error: error && error.message }; }
-});
-ipcMain.handle("clipboard:read-text", () => {
-  try { return { ok: true, text: clipboard.readText() }; }
-  catch (error) { return { ok: false, error: error && error.message }; }
-});
 
 ipcMain.handle("terminal:start", async (_event, { id, cwd, cols, rows, autoRun }) => {
   if (!pty) return { ok: false, error: "终端引擎 node-pty 未加载" };

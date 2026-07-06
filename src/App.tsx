@@ -11,8 +11,6 @@ import {
   Image as ImageIcon,
   LoaderCircle,
   Loader2,
-  Minus,
-  Paperclip,
   PencilLine,
   Pin,
   PinOff,
@@ -120,42 +118,6 @@ function formatFileSize(size: number) {
   return `${Math.round(size / 1024 / 102.4) / 10} MB`;
 }
 
-function displayFileSize(size?: number | string) {
-  if (typeof size === "number") return formatFileSize(size);
-  return size ?? "";
-}
-
-function displayMessageBody(body: string) {
-  return body
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/\*\*([^*\n][\s\S]*?[^*\n])\*\*/g, "$1")
-    .replace(/(^|[\s（(])\*([^*\n]+)\*(?=$|[\s，。！？、）)])/g, "$1$2");
-}
-
-function isMessageProcessing(message: WorkbenchMessage) {
-  return message.meta?.includes("处理中") ?? false;
-}
-
-function ClaudeMessageMark({
-  processing,
-  loadingVariant,
-  completed
-}: {
-  processing: boolean;
-  loadingVariant: LoadingVariant;
-  completed: boolean;
-}) {
-  if (processing) {
-    return (
-      <span className={`loading-mark loading-${loadingVariant}`} aria-hidden="true">
-        <span />
-      </span>
-    );
-  }
-
-  return <img className={completed ? "is-complete" : ""} src={clawdWizard} alt="" />;
-}
-
 function loadAppearance() {
   try {
     const stored = window.localStorage.getItem("claude-workbench-appearance");
@@ -217,11 +179,9 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
-  const [permissionRequests, setPermissionRequests] = useState<Record<string, ClaudePermissionEvent>>({});
   const [appView, setAppView] = useState<AppView>("chat");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("background");
   const [appearance, setAppearance] = useState(loadAppearance);
-  const [completedMessageIds, setCompletedMessageIds] = useState<Set<string>>(() => new Set());
   const [engines, setEngines] = useState<EngineInfo[]>([]);
   const [showNewConversationModal, setShowNewConversationModal] = useState(false);
   const [closeBehavior, setCloseBehavior] = useState<"quit" | "tray">("quit");
@@ -452,18 +412,11 @@ export function App() {
         );
       }
       if (event.error) showToast(event.error);
-      if (event.messageId) {
-        setCompletedMessageIds((current) => new Set(current).add(event.messageId));
-        setPermissionRequests((current) => {
-          const next = { ...current };
-          delete next[event.messageId];
-          return next;
-        });
-      }
     };
 
-    const offPermission = window.workbench.onClaudePermission((event) => {
-      setPermissionRequests((current) => ({ ...current, [event.messageId]: event }));
+    const offPermission = window.workbench.onClaudePermission(() => {
+      // (No PermissionCard surface yet — events are accepted but ignored.
+      //  When the permission UI is reintroduced, render the request here.)
     });
     const offSelectMessageContent = window.workbench.onSelectMessageContent(({ x, y }) => {
       selectMessageContentAt(x, y);
@@ -498,8 +451,8 @@ export function App() {
         })
       : () => {};
     const offEnginePermission = window.workbench.onEnginePermission
-      ? window.workbench.onEnginePermission((event) => {
-          setPermissionRequests((current) => ({ ...current, [event.messageId]: event }));
+      ? window.workbench.onEnginePermission(() => {
+          // (No surface yet — see Claude permission handler above.)
         })
       : () => {};
     const offEngineDone = window.workbench.onEngineDone ? window.workbench.onEngineDone(syncFinal) : () => {};
@@ -919,25 +872,6 @@ export function App() {
       selection?.removeAllRanges();
       selection?.addRange(range);
     }
-  }
-
-  async function answerPermission(request: ClaudePermissionEvent, choice: ClaudePermissionChoice) {
-    if (!window.workbench?.answerClaudePermission) return;
-    const result = await window.workbench.answerClaudePermission({
-      conversationId: request.conversationId,
-      input: choice.input
-    });
-
-    if (!result.ok) {
-      showToast(result.error || "没有成功提交权限选择。");
-      return;
-    }
-
-    setPermissionRequests((current) => {
-      const next = { ...current };
-      delete next[request.messageId];
-      return next;
-    });
   }
 
   async function pickChatBackgroundImage() {
@@ -1451,53 +1385,5 @@ export function App() {
         />
       ) : null}
     </main>
-  );
-}
-
-function PermissionCard({
-  request,
-  onChoose
-}: {
-  request: ClaudePermissionEvent;
-  onChoose: (request: ClaudePermissionEvent, choice: ClaudePermissionChoice) => void;
-}) {
-  return (
-    <div className="permission-card" role="group" aria-label="Claude Code 权限确认">
-      <div>
-        <strong>Claude Code 需要你确认</strong>
-        <p>{request.prompt}</p>
-      </div>
-      <div className="permission-actions">
-        {request.choices.map((choice) => (
-          <button
-            className={`permission-button permission-${choice.action}`}
-            key={choice.action}
-            type="button"
-            onClick={() => onChoose(request, choice)}
-          >
-            {choice.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function EmptyConversation({ onPickFiles }: { onPickFiles: () => void }) {
-  return (
-    <div className="empty-state">
-      <div className="empty-mark">
-        <img src={clawdWizard} alt="" aria-hidden="true" />
-      </div>
-      <h2>开始一个干净的 Claude Code 会话</h2>
-      <p>输入任务、拖入文件，或先添加附件。这里会保留整理后的双方对话和关键输出，不让完整终端噪音淹没工作。</p>
-      <div className="empty-actions">
-        <button className="soft-button" type="button" onClick={onPickFiles}>
-          <FilePlus2 aria-hidden="true" />
-          添加文件
-        </button>
-        <span>也可以直接把文件拖进窗口</span>
-      </div>
-    </div>
   );
 }

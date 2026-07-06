@@ -31,7 +31,6 @@ contextBridge.exposeInMainWorld("workbench", {
   sendToClaude: (payload) => ipcRenderer.invoke("claude:send", payload),
   answerClaudePermission: (payload) => ipcRenderer.invoke("claude:permission-answer", payload),
   sendToEngine: (payload) => ipcRenderer.invoke("engine:send", payload),
-  answerEnginePermission: (payload) => ipcRenderer.invoke("engine:permission-answer", payload),
   listEngines: () => ipcRenderer.invoke("engines:list"),
   getAppInfo: () => ipcRenderer.invoke("app:info"),
   onConversationsChanged: (callback) => subscribe("conversations:changed", callback),
@@ -55,10 +54,5 @@ contextBridge.exposeInMainWorld("workbench", {
   onTerminalData: (callback) => subscribe("terminal:data", callback),
   onTerminalExit: (callback) => subscribe("terminal:exit", callback),
   notifyReady: () => ipcRenderer.send("app:renderer-ready"),
-  onOpenDirectory: (callback) => subscribe("open-directory", callback),
-  minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
-  toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
-  closeWindow: () => ipcRenderer.invoke("window:close"),
-  clipboardWriteText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
-  clipboardReadText: () => ipcRenderer.invoke("clipboard:read-text")
+  onOpenDirectory: (callback) => subscribe("open-directory", callback)
 });

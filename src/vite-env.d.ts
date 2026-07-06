@@ -146,10 +146,6 @@ interface Window {
       prompt: string;
       attachments: WorkbenchAttachment[];
     }) => Promise<{ ok: boolean; error?: string }>;
-    answerEnginePermission: (payload: {
-      conversationId: string;
-      input: string;
-    }) => Promise<{ ok: boolean; error?: string }>;
     listEngines: () => Promise<EngineInfo[]>;
     getAppInfo: () => Promise<WorkbenchInfo>;
     onConversationsChanged: (callback: (conversations: WorkbenchConversation[]) => void) => () => void;
@@ -174,10 +170,6 @@ interface Window {
     onTerminalExit: (callback: (event: { id: string; exitCode: number }) => void) => () => void;
     notifyReady: () => void;
     onOpenDirectory: (callback: (event: { directory: string }) => void) => () => void;
-    minimizeWindow: () => Promise<{ ok: boolean }>;
-    toggleMaximize: () => Promise<{ ok: boolean; maximized: boolean }>;
-    closeWindow: () => Promise<{ ok: boolean }>;
     clipboardWriteText: (text: string) => Promise<{ ok: boolean; error?: string }>;
-    clipboardReadText: () => Promise<{ ok: boolean; text?: string; error?: string }>;
   };
 }
