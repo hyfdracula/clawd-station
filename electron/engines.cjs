@@ -103,6 +103,11 @@ const SANDBOX_OPTIONS = {
     { value: "workspace-write", label: "工作区可写" },
     { value: "danger-full-access", label: "完全访问（危险）" }
   ],
+  kimi: [
+    { value: "default", label: "默认（每次确认）" },
+    { value: "acceptEdits", label: "自动接受编辑" },
+    { value: "bypassPermissions", label: "全部放行（危险）" }
+  ],
   opencode: [
     { value: "ask", label: "每次询问" },
     { value: "auto", label: "自动批准" }
@@ -192,6 +197,37 @@ const ENGINES = {
     },
     defaultSandbox: "workspace-write",
     extractSessionIdFromLine: extractCodexThreadId
+  },
+
+  kimi: {
+    name: "Kimi CLI",
+    abbr: "K",
+    resolveBinary() {
+      return process.env.KIMI_BIN || "kimi";
+    },
+    buildArgs({ prompt, cwd, sandbox, sessionId, attachments }) {
+      const args = [
+        "-p",
+        prompt,
+        "--verbose",
+        "--output-format",
+        "stream-json",
+        "--include-partial-messages",
+        "--permission-mode",
+        sandbox || "default"
+      ];
+      if (sessionId) args.push("--resume", sessionId);
+      void attachments; void cwd;
+      return args;
+    },
+    parseEvent: null,
+    getSessionId(conversation) {
+      return conversation.kimiSessionId;
+    },
+    saveSessionId(conversation, id) {
+      return { ...conversation, kimiSessionId: id };
+    },
+    defaultSandbox: "default"
   },
 
   opencode: {

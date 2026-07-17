@@ -2,7 +2,7 @@
 // Shown in the sidebar conversation list and the workspace header.
 import type { CSSProperties } from "react";
 
-type EngineKey = "claude" | "codex" | "opencode";
+type EngineKey = "claude" | "codex" | "opencode" | "kimi";
 
 interface EngineBadgeProps {
   engine?: EngineKey | string;
@@ -12,7 +12,8 @@ interface EngineBadgeProps {
 const ENGINE_META: Record<string, { abbr: string; label: string; color: string }> = {
   claude: { abbr: "C", label: "Claude Code", color: "#D97757" },
   codex: { abbr: "X", label: "Codex CLI", color: "#10A37F" },
-  opencode: { abbr: "O", label: "OpenCode", color: "#6366F1" }
+  opencode: { abbr: "O", label: "OpenCode", color: "#6366F1" },
+  kimi: { abbr: "K", label: "Kimi CLI", color: "#8B5CF6" }
 };
 
 export function EngineBadge({ engine, size = "sm" }: EngineBadgeProps) {

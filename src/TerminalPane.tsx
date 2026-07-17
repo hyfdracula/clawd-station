@@ -91,7 +91,7 @@ function TerminalView({ id, cwd, active, engine }: { id: string; cwd: string; ac
       };
     }
 
-    const autoRun = engine === "codex" ? "codex" : engine === "opencode" ? "opencode" : "claude";
+    const autoRun = engine === "codex" ? "codex" : engine === "opencode" ? "opencode" : engine === "kimi" ? "kimi" : "claude";
     wb.terminalStart({ id, cwd, cols: term.cols, rows: term.rows, autoRun }).then((result) => {
       if (!result.ok) {
         term.writeln("\x1b[31m终端启动失败：" + (result.error ?? "未知错误") + "\x1b[0m");

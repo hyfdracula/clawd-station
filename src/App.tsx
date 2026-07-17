@@ -631,6 +631,7 @@ export function App() {
       claudeSessionId: engine === "claude" ? makeId("claude") : undefined,
       codexSessionId: engine === "codex" ? makeId("codex") : undefined,
       opencodeSessionId: engine === "opencode" ? makeId("opencode") : undefined,
+      kimiSessionId: engine === "kimi" ? makeId("kimi") : undefined,
       title: "新会话",
       updatedAt: "刚刚",
       directory: directory || "~",

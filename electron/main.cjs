@@ -408,7 +408,7 @@ function readConversations() {
     conversations = JSON.parse(fs.readFileSync(dataFile, "utf8"));
     if (!Array.isArray(conversations)) conversations = [];
     conversations = conversations.map((conversation) => {
-      const engine = conversation.engine === "codex" || conversation.engine === "opencode"
+      const engine = conversation.engine === "codex" || conversation.engine === "opencode" || conversation.engine === "kimi"
         ? conversation.engine
         : "claude";
       return {
@@ -1309,13 +1309,14 @@ ipcMain.handle("conversations:create", async (_event, arg) => {
   const opts = arg && typeof arg === "object" ? arg : {};
   const requestedDir = typeof opts.directory === "string" && opts.directory ? opts.directory : "";
   const directory = requestedDir ? resolveCwd(requestedDir) : defaultDirectory();
-  const engine = opts.engine === "codex" || opts.engine === "opencode" ? opts.engine : "claude";
+  const engine = opts.engine === "codex" || opts.engine === "opencode" || opts.engine === "kimi" ? opts.engine : "claude";
   const sandbox = typeof opts.sandbox === "string" && opts.sandbox ? opts.sandbox : defaultSandboxFor(engine);
   const conversation = {
     id: makeId("session"),
     claudeSessionId: crypto.randomUUID(),
     codexSessionId: engine === "codex" ? crypto.randomUUID() : undefined,
     opencodeSessionId: engine === "opencode" ? crypto.randomUUID() : undefined,
+    kimiSessionId: engine === "kimi" ? crypto.randomUUID() : undefined,
     title: requestedDir ? path.basename(directory) || "新会话" : "新会话",
     updatedAt: "刚刚",
     directory,

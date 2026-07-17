@@ -2,7 +2,7 @@
 
 type WorkbenchStatus = "local" | "processing" | "synced";
 type WorkbenchRole = "user" | "assistant";
-type WorkbenchEngine = "claude" | "codex" | "opencode";
+type WorkbenchEngine = "claude" | "codex" | "opencode" | "kimi";
 type WorkbenchSandbox =
   | "default"
   | "acceptEdits"
@@ -33,6 +33,7 @@ interface WorkbenchConversation {
   claudeSessionId?: string;
   codexSessionId?: string;
   opencodeSessionId?: string;
+  kimiSessionId?: string;
   title: string;
   updatedAt: string;
   directory: string;
