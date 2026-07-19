@@ -1,6 +1,6 @@
 {
   "name": "clawd-station",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "private": false,
   "productName": "Clawd Station",
   "description": "A personal desktop workbench for Claude Code conversations.",
@@ -19,10 +19,11 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/*.test.cjs",
     "postinstall": "patch-package && electron-builder install-app-deps",
-    "package:win": "npm run build && electron-builder --win nsis",
+    "package:win": "npm run build && electron-builder --win",
     "package:mac": "npm run build && electron-builder --mac dmg zip"
   },
   "dependencies": {
+    "@fontsource-variable/space-grotesk": "^5.3.0",
     "@vitejs/plugin-react": "^4.5.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
