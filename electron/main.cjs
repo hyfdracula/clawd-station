@@ -1,11 +1,11 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog, Tray, nativeImage } = require("electron");
-const { spawn } = require("child_process");
+const { app, BrowserWindow, Menu, ipcMain, dialog, Tray, nativeImage, shell, clipboard } = require("electron");
+const { spawn, execFile } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { createTerminalAnsiPassthrough } = require("./terminal-ansi.cjs");
 const engines = require("./engines.cjs");
-const { ENGINES, getEngine } = engines;
+const { ENGINES, getEngine, resolveSpawnSpec, trustworthySessionId } = engines;
 const { setupAutoUpdater, checkForUpdatesSilently, quitAndInstall, getCurrentVersion } = require("./updater.cjs");
 
 let pty = null;
@@ -15,6 +15,16 @@ try {
   console.error("node-pty unavailable:", error && error.message);
 }
 const terminals = new Map();
+// Recent output per terminal, so a remounting renderer (React StrictMode
+// double-mount, LRU eviction, panel toggle) can re-attach to a live PTY and
+// replay its scrollback instead of killing and respawning the shell.
+const terminalBuffers = new Map();
+const TERMINAL_BUFFER_LIMIT = 64 * 1024;
+
+function appendTerminalBuffer(id, data) {
+  const current = (terminalBuffers.get(id) || "") + data;
+  terminalBuffers.set(id, current.length > TERMINAL_BUFFER_LIMIT ? current.slice(-TERMINAL_BUFFER_LIMIT / 2) : current);
+}
 
 // When the app icon is clicked in the Finder toolbar (or a folder is dropped on it),
 // macOS sends the folder path via "open-file". Open a new session there.
@@ -43,20 +53,20 @@ function handleOpenPath(filePath) {
   }
 }
 
-function focusMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-}
+// NOTE: focusMainWindow is declared once, further below (next to the tray
+// code). A previous duplicate declaration here was removed — with function
+// hoisting the LATER declaration always wins, so the tray-side one (restore
+// if minimized, show only when hidden) is the behavior we keep.
 
 // Clicking an app in the Finder toolbar just activates it; macOS does NOT pass the
 // current folder. So (like "Claude Code Now") we ask Finder for its front window's
 // folder and open a session there.
 let lastFinderDir = "";
 
+// Async — the old spawnSync(osascript, {timeout:3000}) blocked the main
+// process for up to 3s right after the renderer reported ready.
 function getFinderDirectory() {
-  try {
+  return new Promise((resolve) => {
     const script = [
       'tell application "Finder"',
       "  if (count of Finder windows) > 0 then",
@@ -65,21 +75,27 @@ function getFinderDirectory() {
       "end tell",
       'return ""'
     ].join("\n");
-    const result = require("child_process").spawnSync("osascript", ["-e", script], {
-      encoding: "utf8",
-      timeout: 3000
+    execFile("osascript", ["-e", script], { encoding: "utf8", timeout: 3000 }, (error, stdout) => {
+      if (error) return resolve("");
+      resolve((stdout || "").trim());
     });
-    if (result.status === 0) return (result.stdout || "").trim();
-  } catch {}
-  return "";
+  });
 }
 
-function openFinderFolderSession() {
+let finderSessionInFlight = false;
+
+async function openFinderFolderSession() {
   if (process.platform !== "darwin") return;
-  const dir = getFinderDirectory();
-  if (!dir || dir === lastFinderDir) return;
-  lastFinderDir = dir;
-  handleOpenPath(dir);
+  if (finderSessionInFlight) return;
+  finderSessionInFlight = true;
+  try {
+    const dir = await getFinderDirectory();
+    if (!dir || dir === lastFinderDir) return;
+    lastFinderDir = dir;
+    handleOpenPath(dir);
+  } finally {
+    finderSessionInFlight = false;
+  }
 }
 
 const bundledIndexCandidates = app.isPackaged
@@ -134,7 +150,9 @@ function createWindow() {
   const isMac = process.platform === "darwin";
   if (!isMac) Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
-    show: !smokeMode,
+    // Painted off-screen first; shown on ready-to-show to avoid the black
+    // flash while the renderer loads. Smoke mode keeps the window hidden.
+    show: false,
     width: 1240,
     height: 820,
     minWidth: 920,
@@ -148,8 +166,33 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // preload only uses contextBridge + ipcRenderer, which the sandboxed
+      // preload environment supports.
+      sandbox: true
     }
+  });
+
+  if (!smokeMode) {
+    mainWindow.once("ready-to-show", () => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+    });
+  }
+
+  // Never open new windows from the renderer; send external links to the
+  // system browser instead.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+    return { action: "deny" };
+  });
+
+  // Navigation is limited to the origin we actually loaded: the vite dev
+  // server in dev, local files in production.
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const allowed = isDev ? url.startsWith("http://127.0.0.1:5173") : url.startsWith("file://");
+    if (!allowed) event.preventDefault();
   });
 
   if (smokeMode) {
@@ -177,22 +220,7 @@ function createWindow() {
         { label: "全选", role: "selectAll", enabled: params.editFlags.canSelectAll }
       );
     } else {
-      template.push(
-        { label: "复制", role: "copy", enabled: hasSelection },
-        {
-          label: "复制消息全文",
-          click: () => {
-            mainWindow.webContents.send("edit:copy-message-content", { x: params.x, y: params.y });
-          }
-        },
-        { type: "separator" },
-        {
-          label: "选择本条消息",
-          click: () => {
-            mainWindow.webContents.send("edit:select-message-content", { x: params.x, y: params.y });
-          }
-        }
-      );
+      template.push({ label: "复制", role: "copy", enabled: hasSelection });
     }
 
     Menu.buildFromTemplate(template).popup({ window: mainWindow });
@@ -229,49 +257,61 @@ async function runSmokeCheck() {
       (async () => {
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const waitFor = async (selector) => {
-          for (let index = 0; index < 40; index += 1) {
+          for (let index = 0; index < 50; index += 1) {
             const element = document.querySelector(selector);
             if (element) return element;
             await wait(100);
           }
           throw new Error(selector + ' not found; url=' + location.href + '; ready=' + document.readyState + '; body=' + document.body.textContent.slice(0, 240));
         };
-        const setValue = (element, value) => {
-          const descriptor = Object.getOwnPropertyDescriptor(element.constructor.prototype, 'value');
-          descriptor.set.call(element, value);
-          element.dispatchEvent(new Event('input', { bubbles: true }));
-        };
         const assert = (condition, message) => {
           if (!condition) throw new Error(message);
         };
 
-        await waitFor('button[aria-label="新建对话"]');
-        document.querySelector('button[aria-label="新建对话"]').click();
-        await wait(250);
-        assert(document.body.textContent.includes('开始一个干净的 Claude Code 会话'), 'empty state missing');
+        // 1. Rail: the new-conversation button is the shell's primary action.
+        const newButton = await waitFor('button[aria-label="新建对话"]');
+        newButton.click();
 
-        const textarea = await waitFor('#task-input');
-        setValue(textarea, '用一句话确认你已经连接到 Claude Code。');
-        const sendButton = await waitFor('.send-button');
-        assert(!sendButton.disabled, 'send button disabled after typing');
-        sendButton.click();
-        await wait(1200);
+        // 2. New-conversation modal appears; pick the Claude engine and confirm.
+        const dialog = await waitFor('[role="dialog"]');
+        const claudeOption = [...dialog.querySelectorAll('.engine-option')].find((button) =>
+          button.textContent.includes('Claude Code')
+        );
+        assert(claudeOption, 'claude engine option missing');
+        claudeOption.click();
+        assert(claudeOption.getAttribute('aria-checked') === 'true', 'claude engine not selected');
+        const confirmButton = [...dialog.querySelectorAll('button')].find(
+          (button) => button.textContent.trim() === '创建' && !button.disabled
+        );
+        assert(confirmButton, 'confirm button missing or disabled');
+        confirmButton.click();
 
-        assert(document.body.textContent.includes('用一句话确认你已经连接到 Claude Code。'), 'user message missing');
-        assert(document.body.textContent.includes('连接到本地 Claude Code 执行链路'), 'mock Claude response missing');
-        assert(document.body.textContent.includes('Mock Claude 已启用'), 'mock indicator missing');
+        // 3. The created conversation shows up in the session list.
+        await waitFor('.session-item');
+
+        // 4. Its terminal (xterm) actually mounts.
+        await waitFor('.xterm');
       })();
     `);
     await app.quit();
   } catch (error) {
     console.error(error);
-    await app.quit();
-    process.exitCode = 1;
+    // app.quit() swallows process.exitCode on some platforms — hard-exit so
+    // CI sees the failure.
+    app.exit(1);
   }
 }
 
 function makeId(prefix) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+// Conversation ids are always `session-<uuid>` (see makeId). IPC handlers
+// that use the id as a filesystem path component validate against this —
+// anything else is rejected outright (path-traversal guard).
+const CONVERSATION_ID_PATTERN = /^session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidConversationId(id) {
+  return typeof id === "string" && CONVERSATION_ID_PATTERN.test(id);
 }
 
 function nowLabel() {
@@ -427,7 +467,10 @@ function readConversations() {
     conversations = [
       {
         id: makeId("session"),
-        claudeSessionId: crypto.randomUUID(),
+        // No pre-filled session id: the real id is captured from the CLI's
+        // event stream on the first run. A random UUID here would be passed
+        // to --resume and fail with "session not found".
+        claudeSessionId: null,
         title: "新会话",
         updatedAt: "刚刚",
         directory: defaultDirectory(),
@@ -443,9 +486,25 @@ function readConversations() {
   }
 }
 
+// Atomic write: temp file + rename, so a crash mid-write never leaves a
+// truncated JSON file. Failures are logged, never thrown — a disk hiccup
+// must not take down the main process.
+function writeFileAtomic(filePath, contents) {
+  const tempPath = `${filePath}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, contents);
+    fs.renameSync(tempPath, filePath);
+  } catch (error) {
+    console.error("writeFileAtomic failed for", filePath, error);
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {}
+  }
+}
+
 function writeConversations() {
   fs.mkdirSync(storeDir, { recursive: true });
-  fs.writeFileSync(dataFile, JSON.stringify(conversations, null, 2));
+  writeFileAtomic(dataFile, JSON.stringify(conversations, null, 2));
   for (const conversation of conversations) writeConversationFiles(conversation);
 }
 
@@ -457,7 +516,43 @@ function writeConversationFiles(conversation) {
   if (!conversation?.id) return;
   const targetDir = conversationDir(conversation.id);
   fs.mkdirSync(targetDir, { recursive: true });
-  fs.writeFileSync(path.join(targetDir, "transcript.json"), JSON.stringify(conversation, null, 2));
+  writeFileAtomic(path.join(targetDir, "transcript.json"), JSON.stringify(conversation, null, 2));
+}
+
+// Streaming chunks update a conversation many times per second. Writing the
+// full store on every chunk is needlessly expensive, so chunk updates go
+// through this trailing debounce; run completion / quit flush explicitly.
+const STREAM_WRITE_DEBOUNCE_MS = 500;
+const dirtyConversationIds = new Set();
+let streamWriteTimer = null;
+
+function scheduleStreamWrite(conversationId) {
+  dirtyConversationIds.add(conversationId);
+  if (streamWriteTimer) return;
+  streamWriteTimer = setTimeout(() => {
+    streamWriteTimer = null;
+    flushStreamWrites();
+  }, STREAM_WRITE_DEBOUNCE_MS);
+}
+
+function flushStreamWrites() {
+  if (streamWriteTimer) {
+    clearTimeout(streamWriteTimer);
+    streamWriteTimer = null;
+  }
+  if (dirtyConversationIds.size === 0) return;
+  const ids = [...dirtyConversationIds];
+  dirtyConversationIds.clear();
+  try {
+    fs.mkdirSync(storeDir, { recursive: true });
+    writeFileAtomic(dataFile, JSON.stringify(conversations, null, 2));
+    for (const id of ids) {
+      const conversation = findConversation(id);
+      if (conversation) writeConversationFiles(conversation);
+    }
+  } catch (error) {
+    console.error("flushStreamWrites failed", error);
+  }
 }
 
 function deleteConversationFiles(id) {
@@ -465,10 +560,9 @@ function deleteConversationFiles(id) {
   fs.rmSync(conversationDir(id), { recursive: true, force: true });
 }
 
-function sendToRenderer(channel, payload) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(channel, payload);
-}
+// NOTE: sendToRenderer is declared once, near the bottom of this file. A
+// previous duplicate here was removed (function hoisting made the later one
+// win anyway; both implementations were equivalent).
 
 function stripAnsi(text) {
   return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
@@ -490,9 +584,26 @@ function findConversation(id) {
   return conversations.find((conversation) => conversation.id === id);
 }
 
+// Persists dataFile + ONLY the changed conversation's transcript (the old
+// version rewrote every transcript on every update).
 function updateConversation(id, updater) {
+  let updated = null;
+  conversations = conversations.map((conversation) => {
+    if (conversation.id !== id) return conversation;
+    updated = updater(conversation);
+    return updated;
+  });
+  if (!updated) return;
+  fs.mkdirSync(storeDir, { recursive: true });
+  writeFileAtomic(dataFile, JSON.stringify(conversations, null, 2));
+  writeConversationFiles(updated);
+}
+
+// Hot-path variant for streaming chunks: same in-memory update, but the disk
+// write is debounced and flushed on run completion / quit.
+function updateConversationStreaming(id, updater) {
   conversations = conversations.map((conversation) => (conversation.id === id ? updater(conversation) : conversation));
-  writeConversations();
+  scheduleStreamWrite(id);
 }
 
 function safeCopyAttachment(conversationId, sourcePath) {
@@ -870,6 +981,38 @@ function runMockOpencode({ conversationId, prompt, attachments }) {
   setTimeout(emit, 80);
 }
 
+// ---------------------------------------------------------------------------
+// Child-process lifecycle helpers
+// ---------------------------------------------------------------------------
+
+// Kill a spawned CLI process. On Windows, child.kill() only signals the
+// direct process — cmd.exe shims and their grandchildren survive. taskkill
+// /T takes down the whole tree.
+function killChildTree(child) {
+  if (!child || child.killed) return;
+  try {
+    if (process.platform === "win32" && child.pid) {
+      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" }).unref();
+    } else {
+      child.kill("SIGTERM");
+    }
+  } catch {}
+}
+
+// Kill any in-flight run (claude or generic engine) for a conversation.
+function killActiveRun(conversationId) {
+  const claudeRun = activeClaudeRuns.get(conversationId);
+  if (claudeRun) {
+    killChildTree(claudeRun.child);
+    activeClaudeRuns.delete(conversationId);
+  }
+  const engineRun = activeEngineRuns.get(conversationId);
+  if (engineRun) {
+    killChildTree(engineRun.child);
+    activeEngineRuns.delete(conversationId);
+  }
+}
+
 function runClaude({ conversationId, prompt, attachments }) {
   const conversation = findConversation(conversationId);
   if (!conversation) throw new Error("Conversation not found");
@@ -878,6 +1021,10 @@ function runClaude({ conversationId, prompt, attachments }) {
     runMockClaude({ conversationId, prompt, attachments });
     return;
   }
+
+  // A second send while a run is still active must not silently stack two
+  // processes on one conversation: kill the previous run first.
+  killActiveRun(conversationId);
 
   const messageId = makeId("msg");
   const startedAt = nowLabel();
@@ -916,18 +1063,24 @@ function runClaude({ conversationId, prompt, attachments }) {
     "default",
   ];
   // Persist the underlying Claude session so future sends can --resume it
-  // and keep the conversation context across runs.
-  if (conversation.claudeSessionId) {
-    args.push("--resume", conversation.claudeSessionId);
+  // and keep the conversation context across runs. Only ids captured from a
+  // real run are trusted (trustworthySessionId) — locally pre-filled random
+  // UUIDs on fresh conversations would fail with "session not found".
+  const resumeId = trustworthySessionId(conversation, conversation.claudeSessionId);
+  if (resumeId) {
+    args.push("--resume", resumeId);
   }
 
+  // On Windows, npm-global CLIs are .cmd shims; resolveSpawnSpec wraps them
+  // in cmd.exe (bare-name spawn with shell:false only gets .exe appended).
+  const spawnSpec = resolveSpawnSpec(claudeExecutable, args);
   const child = spawn(
-    claudeExecutable,
-    args,
+    spawnSpec.command,
+    spawnSpec.args,
     {
       cwd: resolveCwd(conversation.directory),
       env: { ...process.env, FORCE_COLOR: "0" },
-      shell: false,
+      shell: spawnSpec.shell ?? false,
       stdio: ["pipe", "pipe", "pipe"]
     }
   );
@@ -952,41 +1105,48 @@ function runClaude({ conversationId, prompt, attachments }) {
     });
   };
 
-  child.stdout.on("data", (buffer) => {
-    stdoutBuffer += buffer.toString("utf8");
+  const handleStdoutLine = (line) => {
+    if (!line.trim()) return;
+    if (isIgnorableClaudeWarning(line)) return;
+    // Capture session id from system/result events so future sends can
+    // --resume and keep the conversation context.
+    const newSid = extractClaudeSessionId(line);
+    if (newSid) {
+      updateConversation(conversationId, (current) =>
+        current.claudeSessionId === newSid
+          ? current
+          : { ...current, claudeSessionId: newSid }
+      );
+    }
+    const chunk = extractStreamText(line);
+    if (!chunk.trim()) return;
+    updateConversationStreaming(conversationId, (current) => ({
+      ...current,
+      messages: current.messages.map((message) =>
+        message.id === messageId ? { ...message, body: `${message.body}${chunk}` } : message
+      )
+    }));
+    sendToRenderer("claude:chunk", { conversationId, messageId, chunk });
+  };
+
+  // setEncoding makes data callbacks deliver strings and, crucially, buffers
+  // partial multi-byte UTF-8 sequences across chunks internally — a 3-byte
+  // Chinese character split at a chunk boundary no longer becomes U+FFFD.
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (text) => {
+    stdoutBuffer += text;
     const lines = stdoutBuffer.split(/\r?\n/);
     stdoutBuffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      if (isIgnorableClaudeWarning(line)) continue;
-      // Capture session id from system/result events so future sends can
-      // --resume and keep the conversation context.
-      const newSid = extractClaudeSessionId(line);
-      if (newSid) {
-        updateConversation(conversationId, (current) =>
-          current.claudeSessionId === newSid
-            ? current
-            : { ...current, claudeSessionId: newSid }
-        );
-      }
-      const chunk = extractStreamText(line);
-      if (!chunk.trim()) continue;
-      updateConversation(conversationId, (current) => ({
-        ...current,
-        messages: current.messages.map((message) =>
-          message.id === messageId ? { ...message, body: `${message.body}${chunk}` } : message
-        )
-      }));
-      sendToRenderer("claude:chunk", { conversationId, messageId, chunk });
-    }
+    for (const line of lines) handleStdoutLine(line);
   });
 
-  child.stderr.on("data", (buffer) => {
-    stderrBuffer += buffer.toString("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (text) => {
+    stderrBuffer += text;
     const cleanStderr = cleanRunnerOutput(stderrBuffer);
     if (!cleanStderr) return;
     maybeSendPermissionPrompt(cleanStderr);
-    updateConversation(conversationId, (current) => ({
+    updateConversationStreaming(conversationId, (current) => ({
       ...current,
       messages: current.messages.map((message) =>
         message.id === messageId ? { ...message, output: cleanStderr.slice(-4000) } : message
@@ -1012,11 +1172,16 @@ function runClaude({ conversationId, prompt, attachments }) {
         return finalMessage;
       })
     }));
+    flushStreamWrites();
     sendToRenderer("claude:error", { conversationId, messageId, error: error.message, finalMessage });
   });
 
   child.on("close", (code) => {
     activeClaudeRuns.delete(conversationId);
+    // The last line may not end with a newline — parse whatever remains in
+    // the buffer instead of dropping it.
+    if (stdoutBuffer.trim()) handleStdoutLine(stdoutBuffer);
+    stdoutBuffer = "";
     const cleanStderr = cleanRunnerOutput(stderrBuffer);
     const status = code === 0 ? "synced" : "local";
     let finalMessage = null;
@@ -1039,6 +1204,7 @@ function runClaude({ conversationId, prompt, attachments }) {
         return finalMessage;
       })
     }));
+    flushStreamWrites();
     sendToRenderer(code === 0 ? "claude:done" : "claude:error", {
       conversationId,
       messageId,
@@ -1056,10 +1222,13 @@ function runClaude({ conversationId, prompt, attachments }) {
 // ---------------------------------------------------------------------------
 
 function spawnGenericChild({ engine, binary, args, cwd, conversationId, messageId }) {
-  const child = spawn(binary, args, {
+  // On Windows, npm-global CLIs are .cmd shims; resolveSpawnSpec wraps them
+  // in cmd.exe (bare-name spawn with shell:false only gets .exe appended).
+  const spawnSpec = resolveSpawnSpec(binary, args);
+  const child = spawn(spawnSpec.command, spawnSpec.args, {
     cwd,
     env: { ...process.env, FORCE_COLOR: "0" },
-    shell: false,
+    shell: spawnSpec.shell ?? false,
     stdio: ["pipe", "pipe", "pipe"]
   });
 
@@ -1068,44 +1237,54 @@ function spawnGenericChild({ engine, binary, args, cwd, conversationId, messageI
   let capturedSessionId = "";
   const parseEvent = engine.parseEvent;
   const extractSessionIdFromLine = engine.extractSessionIdFromLine;
+  // Optional stream-level text filter (OpenCode <think> blocks can be split
+  // across JSONL events, which per-event stripping cannot catch).
+  const filterText = engine.createTextFilter ? engine.createTextFilter() : (text) => text;
 
-  child.stdout.on("data", (buffer) => {
-    stdoutBuffer += buffer.toString("utf8");
+  const handleStdoutLine = (line) => {
+    if (!line.trim()) return;
+    // Capture session ID from event stream (Codex thread.started, OpenCode
+    // sessionID, Kimi session.resume_hint)
+    if (extractSessionIdFromLine && !capturedSessionId) {
+      const sid = extractSessionIdFromLine(line);
+      if (sid) {
+        capturedSessionId = sid;
+        updateConversation(conversationId, (current) => engine.saveSessionId(current, sid));
+        sendToRenderer("engine:session-id", {
+          conversationId,
+          engine: engine.name,
+          sessionId: sid
+        });
+      }
+    }
+    if (!parseEvent) return;
+    const chunk = filterText(parseEvent(line));
+    if (!chunk || !chunk.trim()) return;
+    updateConversationStreaming(conversationId, (current) => ({
+      ...current,
+      messages: current.messages.map((m) =>
+        m.id === messageId ? { ...m, body: `${m.body}${chunk}` } : m
+      )
+    }));
+    sendToRenderer("engine:chunk", { conversationId, messageId, chunk });
+  };
+
+  // setEncoding buffers partial multi-byte UTF-8 across chunks — a 3-byte
+  // Chinese character split at a chunk boundary no longer becomes U+FFFD.
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (text) => {
+    stdoutBuffer += text;
     const lines = stdoutBuffer.split(/\r?\n/);
     stdoutBuffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      // Capture session ID from event stream (Codex thread.started, OpenCode sessionID)
-      if (extractSessionIdFromLine && !capturedSessionId) {
-        const sid = extractSessionIdFromLine(line);
-        if (sid) {
-          capturedSessionId = sid;
-          updateConversation(conversationId, (current) => engine.saveSessionId(current, sid));
-          sendToRenderer("engine:session-id", {
-            conversationId,
-            engine: engine.name,
-            sessionId: sid
-          });
-        }
-      }
-      if (!parseEvent) continue;
-      const chunk = parseEvent(line);
-      if (!chunk || !chunk.trim()) continue;
-      updateConversation(conversationId, (current) => ({
-        ...current,
-        messages: current.messages.map((m) =>
-          m.id === messageId ? { ...m, body: `${m.body}${chunk}` } : m
-        )
-      }));
-      sendToRenderer("engine:chunk", { conversationId, messageId, chunk });
-    }
+    for (const line of lines) handleStdoutLine(line);
   });
 
-  child.stderr.on("data", (buffer) => {
-    stderrBuffer += buffer.toString("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (text) => {
+    stderrBuffer += text;
     const cleanStderr = cleanRunnerOutput(stderrBuffer);
     if (!cleanStderr) return;
-    updateConversation(conversationId, (current) => ({
+    updateConversationStreaming(conversationId, (current) => ({
       ...current,
       messages: current.messages.map((m) =>
         m.id === messageId ? { ...m, output: cleanStderr.slice(-4000) } : m
@@ -1131,11 +1310,16 @@ function spawnGenericChild({ engine, binary, args, cwd, conversationId, messageI
         return finalMessage;
       })
     }));
+    flushStreamWrites();
     sendToRenderer("engine:error", { conversationId, messageId, error: error.message, finalMessage });
   });
 
   child.on("close", (code) => {
     activeEngineRuns.delete(conversationId);
+    // The last line may not end with a newline — parse whatever remains in
+    // the buffer instead of dropping it.
+    if (stdoutBuffer.trim()) handleStdoutLine(stdoutBuffer);
+    stdoutBuffer = "";
     const cleanStderr = cleanRunnerOutput(stderrBuffer);
     const status = code === 0 ? "synced" : "local";
     let finalMessage = null;
@@ -1162,6 +1346,7 @@ function spawnGenericChild({ engine, binary, args, cwd, conversationId, messageI
         return finalMessage;
       })
     }));
+    flushStreamWrites();
     sendToRenderer(code === 0 ? "engine:done" : "engine:error", {
       conversationId,
       messageId,
@@ -1177,16 +1362,23 @@ function runGenericEngine({ engine, conversationId, prompt, attachments }) {
   const conversation = findConversation(conversationId);
   if (!conversation) throw new Error("Conversation not found");
 
+  // A second send while a run is still active must not silently stack two
+  // processes on one conversation: kill the previous run first.
+  killActiveRun(conversationId);
+
   const messageId = makeId("msg");
   const startedAt = nowLabel();
+  // Attachment paths are embedded by engine.buildArgs (codex appends them to
+  // the prompt, opencode passes --file, kimi appends) — the prompt itself is
+  // sent as typed. The chat bubble still shows the normalized form.
   const fullPrompt = normalizePrompt(prompt, attachments);
   const cwd = resolveCwd(conversation.directory);
   const binary = engine.resolveBinary();
   const args = engine.buildArgs({
-    prompt: fullPrompt,
+    prompt,
     cwd,
     sandbox: conversation.sandbox || engine.defaultSandbox,
-    sessionId: engine.getSessionId(conversation),
+    sessionId: trustworthySessionId(conversation, engine.getSessionId(conversation)),
     attachments
   });
 
@@ -1236,13 +1428,14 @@ function checkClaudeConnection() {
     return { connected: true, detail: "Mock Claude 已启用" };
   }
 
+  const versionSpec = resolveSpawnSpec(claudeExecutable, ["--version"]);
   const result = spawn(
-    claudeExecutable,
-    ["--version"],
+    versionSpec.command,
+    versionSpec.args,
     {
       cwd: defaultDirectory(),
       env: { ...process.env, FORCE_COLOR: "0" },
-      shell: false,
+      shell: versionSpec.shell ?? false,
       stdio: ["ignore", "ignore", "ignore"]
     }
   );
@@ -1272,6 +1465,18 @@ function checkClaudeConnection() {
   });
 }
 
+// Single instance: a second launch focuses the existing window instead of
+// starting a competing main process (two processes would race on the same
+// conversations.json store).
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    focusMainWindow();
+  });
+}
+
 app.whenReady().then(() => {
   ensureStorage();
   loadAppSettings();
@@ -1293,6 +1498,20 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  // Persist any debounced streaming writes before we go down.
+  flushStreamWrites();
+  // Kill every in-flight CLI run and terminal — child processes must not
+  // outlive the app (Windows: whole tree via taskkill /T).
+  for (const [conversationId] of activeClaudeRuns) killActiveRun(conversationId);
+  for (const [conversationId] of activeEngineRuns) killActiveRun(conversationId);
+  for (const [, child] of engineInstallRuns) killChildTree(child);
+  engineInstallRuns.clear();
+  for (const [, term] of terminals) {
+    try {
+      term.kill();
+    } catch {}
+  }
+  terminals.clear();
 });
 
 app.on("window-all-closed", () => {
@@ -1311,12 +1530,17 @@ ipcMain.handle("conversations:create", async (_event, arg) => {
   const directory = requestedDir ? resolveCwd(requestedDir) : defaultDirectory();
   const engine = opts.engine === "codex" || opts.engine === "opencode" || opts.engine === "kimi" ? opts.engine : "claude";
   const sandbox = typeof opts.sandbox === "string" && opts.sandbox ? opts.sandbox : defaultSandboxFor(engine);
+  // Optional output directory — empty means "follow the working directory".
+  const outputDir = typeof opts.outputDir === "string" && opts.outputDir ? resolveCwd(opts.outputDir) : "";
   const conversation = {
     id: makeId("session"),
-    claudeSessionId: crypto.randomUUID(),
-    codexSessionId: engine === "codex" ? crypto.randomUUID() : undefined,
-    opencodeSessionId: engine === "opencode" ? crypto.randomUUID() : undefined,
-    kimiSessionId: engine === "kimi" ? crypto.randomUUID() : undefined,
+    // Session ids stay empty until captured from the CLI's event stream.
+    // Pre-filling a random UUID makes the first send --resume a session the
+    // CLI has never seen, which fails with "session not found".
+    claudeSessionId: null,
+    codexSessionId: undefined,
+    opencodeSessionId: undefined,
+    kimiSessionId: undefined,
     title: requestedDir ? path.basename(directory) || "新会话" : "新会话",
     updatedAt: "刚刚",
     directory,
@@ -1325,7 +1549,8 @@ ipcMain.handle("conversations:create", async (_event, arg) => {
     messages: [],
     attachments: [],
     engine,
-    sandbox
+    sandbox,
+    outputDir
   };
   conversations = [conversation, ...conversations];
   writeConversations();
@@ -1333,11 +1558,24 @@ ipcMain.handle("conversations:create", async (_event, arg) => {
 });
 
 ipcMain.handle("conversations:update", async (_event, { id, patch }) => {
+  if (!isValidConversationId(id)) return conversations;
   updateConversation(id, (conversation) => ({ ...conversation, ...patch }));
   return conversations;
 });
 
 ipcMain.handle("conversations:delete", async (_event, { id }) => {
+  if (!isValidConversationId(id)) return conversations;
+  // Stop any running CLI process and terminal owned by this conversation
+  // BEFORE removing its data — otherwise the child keeps writing into a
+  // deleted session directory.
+  killActiveRun(id);
+  const term = terminals.get(id);
+  if (term) {
+    try {
+      term.kill();
+    } catch {}
+    terminals.delete(id);
+  }
   conversations = conversations.filter((conversation) => conversation.id !== id);
   deleteConversationFiles(id);
   writeConversations();
@@ -1345,6 +1583,7 @@ ipcMain.handle("conversations:delete", async (_event, { id }) => {
 });
 
 ipcMain.handle("files:pick", async (_event, { conversationId }) => {
+  if (!isValidConversationId(conversationId)) return [];
   const result = await dialog.showOpenDialog({
     properties: ["openFile", "multiSelections"],
     title: "添加到当前 Claude Code 会话"
@@ -1356,31 +1595,9 @@ ipcMain.handle("files:pick", async (_event, { conversationId }) => {
 });
 
 ipcMain.handle("files:copy", async (_event, { conversationId, paths }) => {
+  if (!isValidConversationId(conversationId)) return [];
+  if (!Array.isArray(paths)) return [];
   return paths.filter(Boolean).map((filePath) => safeCopyAttachment(conversationId, filePath));
-});
-
-ipcMain.handle("appearance:pick-background-image", async () => {
-  const result = await dialog.showOpenDialog({
-    properties: ["openFile"],
-    title: "选择对话背景图片",
-    filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }]
-  });
-
-  if (result.canceled || result.filePaths.length === 0) return null;
-
-  return safeCopyAppearanceImage(result.filePaths[0]);
-});
-
-ipcMain.handle("appearance:pick-background-video", async () => {
-  const result = await dialog.showOpenDialog({
-    properties: ["openFile"],
-    title: "选择对话背景视频",
-    filters: [{ name: "视频", extensions: ["mp4", "webm", "mov", "m4v"] }]
-  });
-
-  if (result.canceled || result.filePaths.length === 0) return null;
-
-  return safeCopyAppearanceVideo(result.filePaths[0]);
 });
 
 ipcMain.handle("claude:send", async (_event, payload) => {
@@ -1436,6 +1653,22 @@ ipcMain.handle("window:close", async () => {
   return { ok: true, hidden: false };
 });
 
+ipcMain.handle("window:minimize", async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+  mainWindow.minimize();
+  return { ok: true };
+});
+
+ipcMain.handle("window:toggle-maximize", async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+    return { ok: true, maximized: false };
+  }
+  mainWindow.maximize();
+  return { ok: true, maximized: true };
+});
+
 ipcMain.handle("updater:quit-and-install", async () => {
   quitAndInstall();
 });
@@ -1482,6 +1715,100 @@ ipcMain.handle("engines:list", async () =>
   }))
 );
 
+// --- Engine install detection + guided install -----------------------------
+
+// A mocked engine always reports installed so the smoke/mock flows never see
+// an "uninstalled" state. Note mockAll implies every engine; kimi has no
+// dedicated mock flag (it also has no mock runner).
+function isEngineMocked(key) {
+  if (mockAll) return true;
+  if (key === "claude") return mockClaude;
+  if (key === "codex") return mockCodex;
+  if (key === "opencode") return mockOpencode;
+  return false;
+}
+
+// Detection is cheap (where.exe / which, milliseconds) but still cached; the
+// renderer passes { refresh: true } after an install finishes. Any completed
+// install also drops the cache since PATH may have changed.
+let engineDetectCache = null;
+
+function detectEnginesUncached() {
+  const list = Object.keys(ENGINES).map((key) => {
+    const install = engines.installCommandLabel(key);
+    if (isEngineMocked(key)) return { engine: key, installed: true, bin: "mock", install };
+    return { ...engines.detectEngineInstall(key), install };
+  });
+  return { engines: list, npm: engines.detectNpmInstall() };
+}
+
+ipcMain.handle("engines:detect", async (_event, opts) => {
+  const refresh = Boolean(opts && opts.refresh);
+  if (!engineDetectCache || refresh) engineDetectCache = detectEnginesUncached();
+  return engineDetectCache;
+});
+
+// engine key -> child process. Used both as the duplicate-install guard and
+// for cleanup on quit.
+const engineInstallRuns = new Map();
+
+ipcMain.handle("engines:install", async (_event, payload) => {
+  const engine = payload && typeof payload.engine === "string" ? payload.engine : "";
+  // Whitelist: only the four known engines map to an install command —
+  // anything else from the renderer is rejected outright.
+  const spec = engines.installSpecFor(engine);
+  if (!spec) return { ok: false, error: "未知引擎，已拒绝安装。" };
+  if (engineInstallRuns.has(engine)) return { ok: false, error: "该引擎正在安装中，请勿重复点击。" };
+  if (!engines.detectNpmInstall()) {
+    return { ok: false, error: "未检测到 npm。请先安装 Node.js（https://nodejs.org）再试。" };
+  }
+
+  try {
+    // npm is a .cmd shim on win32 — resolveSpawnSpec wraps it in cmd.exe.
+    const spawnSpec = resolveSpawnSpec(spec.command, spec.args);
+    const child = spawn(spawnSpec.command, spawnSpec.args, {
+      cwd: defaultDirectory(),
+      env: { ...process.env, FORCE_COLOR: "0" },
+      shell: spawnSpec.shell ?? false,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    engineInstallRuns.set(engine, child);
+
+    let settled = false;
+    const finish = (code, errorMessage) => {
+      if (settled) return;
+      settled = true;
+      engineInstallRuns.delete(engine);
+      engineDetectCache = null;
+      const done = { engine, done: true, code: typeof code === "number" ? code : -1 };
+      if (errorMessage) done.error = errorMessage;
+      sendToRenderer("engines:install-progress", done);
+    };
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (text) => sendToRenderer("engines:install-progress", { engine, chunk: String(text) }));
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (text) => sendToRenderer("engines:install-progress", { engine, chunk: String(text) }));
+    child.on("error", (error) => finish(-1, error.message));
+    child.on("close", (code) => finish(code));
+    return { ok: true };
+  } catch (error) {
+    engineInstallRuns.delete(engine);
+    return { ok: false, error: error instanceof Error ? error.message : "安装启动失败。" };
+  }
+});
+
+// System clipboard write — the sandboxed renderer's navigator.clipboard is
+// not reliable here, so copy actions route through the main process.
+ipcMain.handle("clipboard:write-text", async (_event, text) => {
+  try {
+    clipboard.writeText(String(text ?? ""));
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "复制失败" };
+  }
+});
+
 ipcMain.handle("app:info", async () => ({
   storeDir,
   attachmentRoot,
@@ -1504,10 +1831,11 @@ ipcMain.handle("terminal:start", async (_event, { id, cwd, cols, rows, autoRun }
   try {
     const existing = terminals.get(id);
     if (existing) {
-      try {
-        existing.kill();
-      } catch {}
-      terminals.delete(id);
+      // A live PTY for this session already exists: keep it. The renderer is
+      // remounting (StrictMode, LRU, panel toggle) — replay scrollback and
+      // re-attach rather than killing the user's shell mid-work. autoRun is
+      // only ever written on a fresh spawn below.
+      return { ok: true, replay: terminalBuffers.get(id) || "" };
     }
     const shell = resolveLoginShell();
     const term = pty.spawn(shell.command, shell.args, {
@@ -1522,9 +1850,14 @@ ipcMain.handle("terminal:start", async (_event, { id, cwd, cols, rows, autoRun }
     // (xterm.js reassembles internally; this is a defense-in-depth safety net
     // for downstream code that might want to parse ANSI later.)
     const passthroughForThisTerminal = createTerminalAnsiPassthrough();
-    term.onData((data) => sendToRenderer("terminal:data", { id, data: passthroughForThisTerminal(data) }));
+    term.onData((data) => {
+      const out = passthroughForThisTerminal(data);
+      appendTerminalBuffer(id, out);
+      sendToRenderer("terminal:data", { id, data: out });
+    });
     term.onExit(({ exitCode }) => {
       terminals.delete(id);
+      terminalBuffers.delete(id);
       sendToRenderer("terminal:exit", { id, exitCode });
     });
     terminals.set(id, term);
@@ -1567,6 +1900,7 @@ ipcMain.on("terminal:kill", (_event, { id }) => {
     } catch {}
     terminals.delete(id);
   }
+  terminalBuffers.delete(id);
 });
 
 ipcMain.on("app:renderer-ready", () => {
