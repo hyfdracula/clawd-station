@@ -43,12 +43,14 @@ interface WorkbenchConversation {
   attachments: WorkbenchAttachment[];
   engine?: WorkbenchEngine;
   sandbox?: WorkbenchSandbox;
+  outputDir?: string;
 }
 
 interface CreateConversationOptions {
   directory?: string;
   engine?: WorkbenchEngine;
   sandbox?: WorkbenchSandbox;
+  outputDir?: string;
 }
 
 interface ClaudeChunkEvent {
@@ -79,22 +81,32 @@ interface SelectMessageContentEvent {
   y: number;
 }
 
-interface PickedBackgroundImage {
-  path: string;
-  url: string;
-}
-
-interface PickedBackgroundVideo {
-  path: string;
-  url: string;
-}
-
 interface EngineInfo {
   key: WorkbenchEngine;
   name: string;
   abbr: string;
   defaultSandbox: WorkbenchSandbox;
   sandboxOptions: { value: WorkbenchSandbox; label: string }[];
+}
+
+interface EngineDetectEntry {
+  engine: WorkbenchEngine;
+  installed: boolean;
+  bin: string;
+  install: string;
+}
+
+interface EngineDetectResult {
+  engines: EngineDetectEntry[];
+  npm: boolean;
+}
+
+interface EngineInstallProgressEvent {
+  engine: WorkbenchEngine;
+  chunk?: string;
+  done?: boolean;
+  code?: number;
+  error?: string;
 }
 
 interface EngineSessionIdEvent {
@@ -130,13 +142,8 @@ interface UpdaterEvent {
 interface AppSettings {
   closeBehavior?: "quit" | "tray";
   appearance?: Partial<{
-    chatBackground: string;
-    chatOpacity: number;
-    chatImageUrl: string;
-    chatImagePath: string;
-    chatVideoUrl: string;
-    chatVideoPath: string;
-    loadingVariant: string;
+    theme: string;
+    motion: string;
   }>;
   [key: string]: unknown;
 }
@@ -149,13 +156,13 @@ interface Window {
     deleteConversation: (id: string) => Promise<WorkbenchConversation[]>;
     pickFiles: (conversationId: string) => Promise<WorkbenchAttachment[]>;
     copyFiles: (conversationId: string, paths: string[]) => Promise<WorkbenchAttachment[]>;
-    pickBackgroundImage: () => Promise<PickedBackgroundImage | null>;
-    pickBackgroundVideo: () => Promise<PickedBackgroundVideo | null>;
     getSettings: () => Promise<AppSettings>;
     setSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
     checkForUpdates: () => Promise<void>;
     quitAndInstall: () => Promise<void>;
     closeWindow: () => Promise<{ ok: boolean; hidden?: boolean }>;
+    minimizeWindow: () => Promise<{ ok: boolean }>;
+    toggleMaximizeWindow: () => Promise<{ ok: boolean; maximized?: boolean }>;
     setCloseBehavior: (value: "quit" | "tray") => Promise<{ closeBehavior: "quit" | "tray" }>;
     pickDirectory: () => Promise<string | null>;
     sendToClaude: (payload: {
@@ -173,6 +180,9 @@ interface Window {
       attachments: WorkbenchAttachment[];
     }) => Promise<{ ok: boolean; error?: string }>;
     listEngines: () => Promise<EngineInfo[]>;
+    detectEngines: (refresh?: boolean) => Promise<EngineDetectResult>;
+    installEngine: (engine: WorkbenchEngine) => Promise<{ ok: boolean; error?: string }>;
+    onEngineInstallProgress: (callback: (event: EngineInstallProgressEvent) => void) => () => void;
     getAppInfo: () => Promise<WorkbenchInfo>;
     onConversationsChanged: (callback: (conversations: WorkbenchConversation[]) => void) => () => void;
     onClaudeChunk: (callback: (event: ClaudeChunkEvent) => void) => () => void;
@@ -194,7 +204,7 @@ interface Window {
     onUpdaterError: (callback: (event: UpdaterEvent) => void) => () => void;
     onSelectMessageContent: (callback: (event: SelectMessageContentEvent) => void) => () => void;
     onCopyMessageContent: (callback: (event: SelectMessageContentEvent) => void) => () => void;
-    terminalStart: (opts: { id: string; cwd?: string; cols?: number; rows?: number; autoRun?: string }) => Promise<{ ok: boolean; error?: string }>;
+    terminalStart: (opts: { id: string; cwd?: string; cols?: number; rows?: number; autoRun?: string }) => Promise<{ ok: boolean; error?: string; replay?: string }>;
     terminalWrite: (id: string, data: string) => void;
     terminalResize: (id: string, cols: number, rows: number) => void;
     terminalKill: (id: string) => void;

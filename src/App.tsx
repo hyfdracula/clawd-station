@@ -1,48 +1,37 @@
 import {
-  Archive,
-  ArrowLeft,
   CheckCircle2,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Clock3,
-  FilePlus2,
   FolderOpen,
-  Image as ImageIcon,
-  LoaderCircle,
-  Loader2,
+  Info,
+  Minus,
+  Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
   PencilLine,
   Pin,
   PinOff,
   Plus,
-  RotateCcw,
   Search,
-  Send,
   Settings,
   Square,
   Trash2,
   X
 } from "lucide-react";
-import { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import clawdWizard from "./assets/clawd-wizard.png";
 import { TerminalDeck } from "./TerminalPane";
 import { EngineBadge, engineLabel } from "./components/EngineBadge";
 import { NewConversationModal } from "./components/NewConversationModal";
+import { DEFAULT_THEME_ID, THEMES, getTheme } from "./themes";
 
-type Status = WorkbenchStatus;
-type Attachment = WorkbenchAttachment;
 type Conversation = WorkbenchConversation;
 type Engine = WorkbenchEngine;
 type Sandbox = WorkbenchSandbox;
 
-const defaultAppearance = {
-  chatBackground: "#F0EBE0",
-  chatOpacity: 100,
-  chatImageUrl: "",
-  chatImagePath: "",
-  chatVideoUrl: "",
-  chatVideoPath: "",
-  loadingVariant: "ring"
+type MotionLevel = "swift" | "balanced" | "steady";
+
+const defaultAppearance: { theme: string; motion: MotionLevel } = {
+  theme: DEFAULT_THEME_ID,
+  motion: "balanced"
 };
 
 const initialConversations: Conversation[] = [
@@ -62,93 +51,117 @@ const initialConversations: Conversation[] = [
 ];
 
 type AppView = "chat" | "settings";
-type SettingsSection = "background" | "loading" | "behavior" | "about" | "record";
+type SettingsSection = "theme" | "behavior" | "about";
 
-const loadingOptions = [
-  { id: "ring", label: "Ring" },
-  { id: "ring-dual", label: "Dual Ring" },
-  { id: "ring-dash", label: "Dash Ring" },
-  { id: "ring-thin", label: "Thin Ring" },
-  { id: "ring-bold", label: "Bold Ring" },
-  { id: "ring-reverse", label: "Reverse" },
-  { id: "orbit", label: "Orbit" },
-  { id: "orbit-double", label: "Double Orbit" },
-  { id: "orbit-slow", label: "Slow Orbit" },
-  { id: "orbit-fast", label: "Fast Orbit" },
-  { id: "pulse", label: "Pulse" },
-  { id: "pulse-soft", label: "Soft Pulse" },
-  { id: "pulse-ring", label: "Pulse Ring" },
-  { id: "dots", label: "Dots" },
-  { id: "dots-wave", label: "Dot Wave" },
-  { id: "dots-chase", label: "Dot Chase" },
-  { id: "bars", label: "Bars" },
-  { id: "bars-wave", label: "Bar Wave" },
-  { id: "bars-rise", label: "Bar Rise" },
-  { id: "square", label: "Square" },
-  { id: "square-flip", label: "Flip" },
-  { id: "diamond", label: "Diamond" },
-  { id: "typing", label: "Typing" },
-  { id: "scan", label: "Scan" },
-  { id: "radar", label: "Radar" },
-  { id: "breath", label: "Breath" },
-  { id: "spark", label: "Spark" },
-  { id: "flower", label: "Flower" },
-  { id: "clock", label: "Clock" },
-  { id: "pinwheel", label: "Pinwheel" }
-] as const;
+// Motion packs — the UI tempo is a behavior setting, independent of the
+// theme. The active pack is injected onto :root after the theme vars (themes
+// no longer carry --t-*/--ease), so switching levels retimes every
+// var()-driven transition in place, with no reload.
+const MOTION_PACKS: Record<MotionLevel, Record<string, string>> = {
+  swift: { "--t-fast": "100ms", "--t-med": "200ms", "--t-slow": "360ms", "--ease": "cubic-bezier(0.22, 0.68, 0.35, 1)" },
+  balanced: { "--t-fast": "160ms", "--t-med": "340ms", "--t-slow": "600ms", "--ease": "cubic-bezier(0.22, 0.68, 0.35, 1)" },
+  steady: { "--t-fast": "240ms", "--t-med": "460ms", "--t-slow": "800ms", "--ease": "cubic-bezier(0.42, 0, 0.2, 1)" }
+};
 
-type LoadingVariant = (typeof loadingOptions)[number]["id"];
+const MOTION_OPTIONS: { id: MotionLevel; label: string; hint: string }[] = [
+  { id: "swift", label: "敏捷", hint: "100 / 200 / 360ms" },
+  { id: "balanced", label: "标准", hint: "160 / 340 / 600ms" },
+  { id: "steady", label: "沉稳", hint: "240 / 460 / 800ms" }
+];
 
-function formatFileSize(size: number) {
-  if (!size) return "";
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${Math.round(size / 102.4) / 10} KB`;
-  return `${Math.round(size / 1024 / 102.4) / 10} MB`;
-}
+// Mirrors electron/engines.cjs (ENGINES + SANDBOX_OPTIONS). Used only when the
+// engines:list IPC fails, so the new-conversation button never goes dead.
+const FALLBACK_ENGINES: EngineInfo[] = [
+  {
+    key: "claude",
+    name: "Claude Code",
+    abbr: "C",
+    defaultSandbox: "default",
+    sandboxOptions: [
+      { value: "default", label: "默认（每次确认）" },
+      { value: "acceptEdits", label: "自动接受编辑" },
+      { value: "bypassPermissions", label: "全部放行（危险）" }
+    ]
+  },
+  {
+    key: "codex",
+    name: "Codex CLI",
+    abbr: "X",
+    defaultSandbox: "workspace-write",
+    sandboxOptions: [
+      { value: "read-only", label: "只读" },
+      { value: "workspace-write", label: "工作区可写" },
+      { value: "danger-full-access", label: "完全访问（危险）" }
+    ]
+  },
+  {
+    key: "kimi",
+    name: "Kimi CLI",
+    abbr: "K",
+    defaultSandbox: "default",
+    sandboxOptions: [
+      { value: "default", label: "默认（每次确认）" },
+      { value: "acceptEdits", label: "自动接受编辑" },
+      { value: "bypassPermissions", label: "全部放行（危险）" }
+    ]
+  },
+  {
+    key: "opencode",
+    name: "OpenCode",
+    abbr: "O",
+    defaultSandbox: "ask",
+    sandboxOptions: [
+      { value: "ask", label: "每次询问" },
+      { value: "auto", label: "自动批准" }
+    ]
+  }
+];
 
 function loadAppearance() {
   try {
     const stored = window.localStorage.getItem("claude-workbench-appearance");
     if (!stored) return defaultAppearance;
     const parsed = JSON.parse(stored) as Partial<typeof defaultAppearance>;
-    // Backgrounds auto-saved by earlier themes; treat them as "not customized" so the current default wins.
-    const legacyBackgrounds = ["#F7F4EE", "#436690", "#34527A", "#EFF5FC", "#FBF5DA", "#DCE8F5", "#EAE3D5"];
-    const storedBackground =
-      typeof parsed.chatBackground === "string" &&
-      !legacyBackgrounds.includes(parsed.chatBackground.toUpperCase())
-        ? parsed.chatBackground
-        : defaultAppearance.chatBackground;
     return {
-      chatBackground: storedBackground,
-      chatOpacity:
-        typeof parsed.chatOpacity === "number"
-          ? Math.min(100, Math.max(20, parsed.chatOpacity))
-          : defaultAppearance.chatOpacity,
-      chatImageUrl: typeof parsed.chatImageUrl === "string" ? parsed.chatImageUrl : defaultAppearance.chatImageUrl,
-      chatImagePath: typeof parsed.chatImagePath === "string" ? parsed.chatImagePath : defaultAppearance.chatImagePath,
-      chatVideoUrl: typeof parsed.chatVideoUrl === "string" ? parsed.chatVideoUrl : defaultAppearance.chatVideoUrl,
-      chatVideoPath: typeof parsed.chatVideoPath === "string" ? parsed.chatVideoPath : defaultAppearance.chatVideoPath,
-      loadingVariant: loadingOptions.some((option) => option.id === parsed.loadingVariant)
-        ? (parsed.loadingVariant as LoadingVariant)
-        : defaultAppearance.loadingVariant
+      theme:
+        typeof parsed.theme === "string" && THEMES.some((theme) => theme.id === parsed.theme)
+          ? parsed.theme
+          : defaultAppearance.theme,
+      motion:
+        parsed.motion === "swift" || parsed.motion === "balanced" || parsed.motion === "steady"
+          ? parsed.motion
+          : defaultAppearance.motion
     };
   } catch {
     return defaultAppearance;
   }
 }
 
-function hexToRgb(hex: string) {
-  const normalized = hex.replace("#", "");
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return { r: 247, g: 244, b: 238 };
-  return {
-    r: Number.parseInt(normalized.slice(0, 2), 16),
-    g: Number.parseInt(normalized.slice(2, 4), 16),
-    b: Number.parseInt(normalized.slice(4, 6), 16)
-  };
-}
-
 function makeId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+// A freshly created conversation belongs at the TOP of the session list. The
+// main process already returns it first; this makes the ordering explicit on
+// the renderer side so the list never depends on IPC payload order. The pin
+// sort runs on top of this and stays untouched.
+function withCreatedFirst(items: Conversation[], previous: Conversation[]): Conversation[] {
+  const known = new Set(previous.map((conversation) => conversation.id));
+  const fresh = items.filter((item) => !known.has(item.id));
+  if (fresh.length === 0) return items;
+  return [...fresh, ...items.filter((item) => known.has(item.id))];
+}
+
+// Rough sRGB luminance check — used to flip the native color-scheme (form
+// controls, scrollbars) for themes with a light backdrop.
+function isLightColor(color: string | undefined): boolean {
+  if (!color) return false;
+  const hex = color.trim().replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return false;
+  const r = parseInt(hex.slice(0, 2), 16) / 255;
+  const g = parseInt(hex.slice(2, 4), 16) / 255;
+  const b = parseInt(hex.slice(4, 6), 16) / 255;
+  return 0.2126 * r + 0.5872 * g + 0.0722 * b > 0.6;
 }
 
 export function App() {
@@ -159,15 +172,17 @@ export function App() {
   const [activeId, setActiveId] = useState(hasWorkbench ? "" : initialConversations[0].id);
   const [appInfo, setAppInfo] = useState<WorkbenchInfo | null>(null);
   const [query, setQuery] = useState("");
-  const [draft, setDraft] = useState("");
-  const [composerFiles, setComposerFiles] = useState<Attachment[]>([]);
-  const [dragging, setDragging] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [toast, setToast] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
   const [appView, setAppView] = useState<AppView>("chat");
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("background");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("theme");
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
+  // Inline "关于此会话" expansion on a session card (id of the open card).
+  const [aboutId, setAboutId] = useState<string | null>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  // Pre-toggle bounding boxes for the collapse/expand FLIP animation.
+  const flipRectsRef = useRef<Map<string, DOMRect> | null>(null);
   // Appearance starts from a local default, then gets hydrated from
   // main-process settings on first mount. Subsequent changes are
   // persisted to local-records/settings.json via the setSettings IPC.
@@ -175,39 +190,15 @@ export function App() {
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [engines, setEngines] = useState<EngineInfo[]>([]);
   const [showNewConversationModal, setShowNewConversationModal] = useState(false);
+  const [showOutputDirNotice, setShowOutputDirNotice] = useState(false);
+  // CLI install detection — used only for the empty-stage hint when nothing
+  // is installed. The modal runs its own (cached) check on open.
+  const [engineDetect, setEngineDetect] = useState<EngineDetectResult | null>(null);
   const [closeBehavior, setCloseBehavior] = useState<"quit" | "tray">("quit");
   // Auto-updater state — shown in settings and as toast
   const [updateState, setUpdateState] = useState<"idle" | "checking" | "available" | "downloading" | "downloaded" | "error">("idle");
   const [updateInfo, setUpdateInfo] = useState<UpdaterEvent | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const colorInputRef = useRef<HTMLInputElement>(null);
-  const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const dragDepthRef = useRef(0);
-  const streamQueuesRef = useRef(new Map<string, string[]>());
-  const streamTimersRef = useRef(new Map<string, number>());
-
-  const chatRgb = hexToRgb(appearance.chatBackground);
-  const chatOpacity = appearance.chatOpacity / 100;
-  const hasVisualBackground = Boolean(appearance.chatImageUrl || appearance.chatVideoUrl);
-
-  // Render a working-directory label for the workspace header. The
-  // home directory itself is hidden behind a generic "工作目录" chip
-  // since the full path is noisy; any other directory shows its
-  // basename so the active project is recognizable.
-  function formatWorkingDirectory(directory: string | undefined): string {
-    if (!directory) return "工作目录";
-    const normalized = directory.replace(/[\\/]+$/, "");
-    if (!normalized) return "工作目录";
-    if (appInfo && normalized === appInfo.homeDir) return "工作目录";
-    const segments = normalized.split(/[\\/]/).filter(Boolean);
-    return segments[segments.length - 1] || normalized;
-  }
-  const appStyle = {
-    "--custom-chat-background": `rgb(${chatRgb.r} ${chatRgb.g} ${chatRgb.b} / ${hasVisualBackground ? 1 : chatOpacity})`,
-    "--custom-chat-background-overlay": `rgb(${chatRgb.r} ${chatRgb.g} ${chatRgb.b} / ${hasVisualBackground ? 1 - chatOpacity : 0})`,
-    "--custom-chat-image": appearance.chatImageUrl && !appearance.chatVideoUrl ? `url("${appearance.chatImageUrl}")` : "none"
-  } as CSSProperties;
+  const toastTimerRef = useRef<number | null>(null);
 
   const sortedConversations = useMemo(() => {
     return [...conversations].sort((a, b) => Number(b.pinned) - Number(a.pinned));
@@ -226,130 +217,173 @@ export function App() {
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeId) ?? conversations[0];
 
+  // Stable session descriptors for TerminalDeck — memoized so stream-unrelated
+  // re-renders (search typing, hover, toast) don't churn the terminal tree.
+  const terminalSessions = useMemo(
+    () =>
+      sortedConversations.map((conversation) => ({
+        id: conversation.id,
+        cwd: conversation.directory || "~",
+        engine: conversation.engine,
+        outputDir: conversation.outputDir || ""
+      })),
+    [sortedConversations]
+  );
+
+  // Collapse/expand toggle with FLIP: capture every marked button's box before
+  // the layout flip, then useLayoutEffect slides each one from its old spot to
+  // the new one (instead of the instant jump a flex-direction switch causes).
+  function togglePanelCollapsed() {
+    const root = sidebarRef.current;
+    if (root) {
+      const rects = new Map<string, DOMRect>();
+      root.querySelectorAll<HTMLElement>("[data-flip]").forEach((element) => {
+        rects.set(element.dataset.flip as string, element.getBoundingClientRect());
+      });
+      flipRectsRef.current = rects;
+    }
+    setPanelCollapsed((current) => !current);
+  }
+
+  useLayoutEffect(() => {
+    const root = sidebarRef.current;
+    const first = flipRectsRef.current;
+    flipRectsRef.current = null;
+    if (!root || !first) return;
+    root.querySelectorAll<HTMLElement>("[data-flip]").forEach((element) => {
+      const before = first.get(element.dataset.flip as string);
+      if (!before) return;
+      const after = element.getBoundingClientRect();
+      const dx = before.left - after.left;
+      const dy = before.top - after.top;
+      if (!dx && !dy) return;
+      element.style.transition = "none";
+      element.style.transform = `translate(${dx}px, ${dy}px)`;
+      requestAnimationFrame(() => {
+        // Synced with the shell grid's --t-slow track: the buttons slide for
+        // exactly as long as the card takes to shrink/grow. The cleanup reads
+        // the live --t-slow (steady pack = 800ms) plus a margin so no motion
+        // level gets its slide cut mid-way.
+        element.style.transition = "transform var(--t-slow) var(--ease)";
+        element.style.transform = "";
+        const slowMs = parseFloat(getComputedStyle(element).getPropertyValue("--t-slow"));
+        window.setTimeout(() => {
+          element.style.transition = "";
+        }, (Number.isFinite(slowMs) ? slowMs : 800) + 150);
+      });
+    });
+  }, [panelCollapsed]);
+
+  // Clicking anywhere outside a card with an open "关于此会话" region closes it.
+  useEffect(() => {
+    if (!aboutId) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(`[data-about-id="${aboutId}"]`)) return;
+      setAboutId(null);
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, [aboutId]);
+
+  // Theme switching gets a global cross-fade window: for ~850ms every element
+  // eases its colors to the new tokens instead of snapping.
+  const prevThemeRef = useRef(appearance.theme);
+  useEffect(() => {
+    if (prevThemeRef.current === appearance.theme) return;
+    prevThemeRef.current = appearance.theme;
+    const root = document.documentElement;
+    root.classList.add("theme-fading");
+    const timer = window.setTimeout(() => root.classList.remove("theme-fading"), 850);
+    return () => {
+      window.clearTimeout(timer);
+      root.classList.remove("theme-fading");
+    };
+  }, [appearance.theme]);
+
   // Persist appearance to main-process settings.json once we've finished
   // hydrating from disk. Avoids re-writing the file on the initial
-  // hydration tick.
+  // hydration tick. `appearance.theme` rides along in the same payload, so
+  // no main-process change is needed; old settings.json files simply lack
+  // the key and hydrate to the console default.
   useEffect(() => {
     if (!settingsHydrated) return;
     if (!window.workbench?.setSettings) return;
     void window.workbench.setSettings({ appearance });
   }, [appearance, settingsHydrated]);
 
-  function splitStreamChunk(text: string) {
-    const pieces: string[] = [];
-    let index = 0;
-    while (index < text.length) {
-      const nextBreak = text.slice(index).search(/(?<=[。！？.!?；;，,、\n])\s*/);
-      const softEnd = nextBreak >= 0 ? index + nextBreak + 1 : index + 18;
-      const end = Math.min(text.length, Math.max(index + 6, Math.min(index + 24, softEnd)));
-      pieces.push(text.slice(index, end));
-      index = end;
-    }
-    return pieces.filter(Boolean);
-  }
-
-  function appendMessageChunk(conversationId: string, messageId: string, chunk: string) {
-    setConversations((current) =>
-      current.map((conversation) =>
-        conversation.id === conversationId
-          ? {
-              ...conversation,
-              status: "processing",
-              messages: conversation.messages.map((message) =>
-                message.id === messageId ? { ...message, body: `${message.body}${chunk}` } : message
-              )
-            }
-          : conversation
-      )
-    );
-  }
-
-  function stopStreamQueue(messageId: string, conversationId?: string, flush = false) {
-    const timer = streamTimersRef.current.get(messageId);
-    if (timer) window.clearTimeout(timer);
-    if (flush && conversationId) {
-      const queue = streamQueuesRef.current.get(messageId);
-      if (queue?.length) {
-        appendMessageChunk(conversationId, messageId, queue.join(""));
-      }
-    }
-    streamTimersRef.current.delete(messageId);
-    streamQueuesRef.current.delete(messageId);
-  }
-
-  function enqueueMessageChunk(conversationId: string, messageId: string, chunk: string) {
-    const queue = streamQueuesRef.current.get(messageId) ?? [];
-    queue.push(...splitStreamChunk(chunk));
-    streamQueuesRef.current.set(messageId, queue);
-
-    if (streamTimersRef.current.has(messageId)) return;
-
-    const flush = () => {
-      const currentQueue = streamQueuesRef.current.get(messageId);
-      if (!currentQueue || currentQueue.length === 0) {
-        stopStreamQueue(messageId);
-        return;
-      }
-      const next = currentQueue.shift();
-      if (next) appendMessageChunk(conversationId, messageId, next);
-      const timer = window.setTimeout(flush, 18);
-      streamTimersRef.current.set(messageId, timer);
-    };
-
-    const timer = window.setTimeout(flush, 18);
-    streamTimersRef.current.set(messageId, timer);
-  }
-
-  function scrollConversationToBottom(behavior: ScrollBehavior = "smooth") {
-    const scroll = scrollRef.current;
-    if (!scroll) return;
-    scroll.scrollTo({ top: scroll.scrollHeight, behavior });
-  }
-
-  useLayoutEffect(() => {
-    scrollConversationToBottom("auto");
-    const frame = window.requestAnimationFrame(() => scrollConversationToBottom("auto"));
-    const timer = window.setTimeout(() => scrollConversationToBottom("auto"), 80);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [activeId]);
-
+  // Apply the active theme: push every token onto :root, swap the per-theme
+  // override stylesheet, and stamp the id on <html data-theme>. xterm gets
+  // its palette separately via TerminalDeck (options.theme hot-swap).
   useEffect(() => {
-    scrollConversationToBottom("smooth");
-  }, [activeId, activeConversation?.messages.length, activeConversation?.messages.at(-1)?.body]);
+    const theme = getTheme(appearance.theme);
+    const root = document.documentElement;
+    for (const [name, value] of Object.entries(theme.vars)) {
+      root.style.setProperty(name, value);
+    }
+    // xterm's viewport element keeps xterm.css's hard #000 behind the painted
+    // cell grid — paint the terminal well with the theme's xterm background
+    // so the padding ring and any unpainted cells match the grid exactly.
+    root.style.setProperty("--term-bg", theme.xterm.background);
+    root.dataset.theme = theme.id;
+    root.style.colorScheme = isLightColor(theme.vars["--backdrop"]) ? "light" : "dark";
+    let extra = document.getElementById("clawd-theme-extra");
+    if (!extra) {
+      extra = document.createElement("style");
+      extra.id = "clawd-theme-extra";
+      document.head.appendChild(extra);
+    }
+    extra.textContent = theme.extraCss;
+  }, [appearance.theme]);
+
+  // Motion level is a behavior setting, not a theme property: push the active
+  // pack's tempo tokens onto :root. Declared after the theme effect so on a
+  // same-tick theme change these values win the --t-*/--ease slots.
+  useEffect(() => {
+    const pack = MOTION_PACKS[appearance.motion] ?? MOTION_PACKS.balanced;
+    const root = document.documentElement;
+    for (const [name, value] of Object.entries(pack)) {
+      root.style.setProperty(name, value);
+    }
+  }, [appearance.motion]);
+
+  // Stable reference as long as the id is unchanged — getTheme returns the
+  // registry object itself, so TerminalView memoization is unaffected.
+  const activeTheme = getTheme(appearance.theme);
 
   // Load available engines from main process for the new-conversation modal.
+  // Fall back to a local mirror of the engine registry so a failed IPC never
+  // silently kills the new-conversation button.
   useEffect(() => {
-    if (!window.workbench?.listEngines) return;
-    void window.workbench.listEngines().then((items) => setEngines(items || []));
+    if (!window.workbench?.listEngines) {
+      setEngines(FALLBACK_ENGINES);
+      return;
+    }
+    void window.workbench
+      .listEngines()
+      .then((items) => setEngines(items && items.length > 0 ? items : FALLBACK_ENGINES))
+      .catch(() => setEngines(FALLBACK_ENGINES));
   }, []);
 
+  // One cheap cached detection pass at startup, only to decide whether the
+  // empty stage should show the "no CLI installed yet" hint.
   useEffect(() => {
-    const resetDragState = () => {
-      dragDepthRef.current = 0;
-      setDragging(false);
-    };
-
-    const handleWindowDragLeave = (event: globalThis.DragEvent) => {
-      const x = event.clientX;
-      const y = event.clientY;
-      if (x <= 0 || y <= 0 || x >= window.innerWidth || y >= window.innerHeight) resetDragState();
-    };
-
-    window.addEventListener("dragend", resetDragState);
-    window.addEventListener("drop", resetDragState);
-    window.addEventListener("blur", resetDragState);
-    window.addEventListener("dragleave", handleWindowDragLeave);
-
+    if (!window.workbench?.detectEngines) return;
+    let mounted = true;
+    window.workbench
+      .detectEngines()
+      .then((result) => {
+        if (mounted) setEngineDetect(result);
+      })
+      .catch(() => {});
     return () => {
-      window.removeEventListener("dragend", resetDragState);
-      window.removeEventListener("drop", resetDragState);
-      window.removeEventListener("blur", resetDragState);
-      window.removeEventListener("dragleave", handleWindowDragLeave);
+      mounted = false;
     };
   }, []);
+
+  const noEngineInstalled = Boolean(
+    engineDetect && engineDetect.engines.length > 0 && engineDetect.engines.every((entry) => !entry.installed)
+  );
 
   useEffect(() => {
     if (!window.workbench) return;
@@ -375,7 +409,20 @@ export function App() {
       // user has previously changed anything). Mark hydrated so the local-
       // storage sync useEffect below knows it's safe to start persisting.
       if (settings.appearance && typeof settings.appearance === "object") {
-        setAppearance((current) => ({ ...current, ...settings.appearance }));
+        // Pick only the keys we still support — legacy settings.json files
+        // may carry long-removed appearance fields; those are ignored.
+        const stored = settings.appearance;
+        setAppearance((current) => ({
+          ...current,
+          theme:
+            typeof stored.theme === "string" && THEMES.some((theme) => theme.id === stored.theme)
+              ? stored.theme
+              : current.theme,
+          motion:
+            stored.motion === "swift" || stored.motion === "balanced" || stored.motion === "steady"
+              ? stored.motion
+              : current.motion
+        }));
       }
       setSettingsHydrated(true);
     });
@@ -384,114 +431,6 @@ export function App() {
       setConversations(items);
       setActiveId((current) => items.find((item) => item.id === current)?.id ?? items[0]?.id ?? "");
     });
-
-    const offChunk = window.workbench.onClaudeChunk(({ conversationId, messageId, chunk }) => {
-      if (!chunk) return;
-      enqueueMessageChunk(conversationId, messageId, chunk);
-    });
-
-    const offStderr = window.workbench.onClaudeStderr(({ conversationId, messageId, stderr }) => {
-      setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === conversationId
-            ? {
-                ...conversation,
-                messages: conversation.messages.map((message) =>
-                  message.id === messageId ? { ...message, output: stderr ?? message.output } : message
-                )
-              }
-            : conversation
-        )
-      );
-    });
-
-    const syncFinal = (event: ClaudeChunkEvent) => {
-      if (event.messageId) stopStreamQueue(event.messageId, event.conversationId, true);
-      if (event.conversations) setConversations(event.conversations);
-      if (event.finalMessage) {
-        setConversations((current) =>
-          current.map((conversation) =>
-            conversation.id === event.conversationId
-              ? {
-                  ...conversation,
-                  status: event.finalMessage?.meta?.includes("已整理") ? "synced" : "local",
-                  messages: conversation.messages.map((message) =>
-                    message.id === event.messageId
-                      ? {
-                          ...message,
-                          meta: event.finalMessage?.meta ?? message.meta,
-                          output: event.finalMessage?.output ?? message.output,
-                          body: message.body || event.finalMessage?.body || message.body
-                        }
-                      : message
-                  )
-                }
-              : conversation
-          )
-        );
-      }
-      if (event.error) showToast(event.error);
-    };
-
-    const offPermission = window.workbench.onClaudePermission(() => {
-      // (No PermissionCard surface yet — events are accepted but ignored.
-      //  When the permission UI is reintroduced, render the request here.)
-    });
-    const offSelectMessageContent = window.workbench.onSelectMessageContent(({ x, y }) => {
-      selectMessageContentAt(x, y);
-    });
-    const offCopyMessageContent = window.workbench.onCopyMessageContent(({ x, y }) => {
-      void copyMessageContentAt(x, y);
-    });
-    const offDone = window.workbench.onClaudeDone(syncFinal);
-    const offError = window.workbench.onClaudeError(syncFinal);
-
-    // Engine (Codex / OpenCode / generic) listeners share the same plumbing as Claude.
-    const offEngineChunk = window.workbench.onEngineChunk
-      ? window.workbench.onEngineChunk(({ conversationId, messageId, chunk }) => {
-          if (!chunk) return;
-          enqueueMessageChunk(conversationId, messageId, chunk);
-        })
-      : () => {};
-    const offEngineStderr = window.workbench.onEngineStderr
-      ? window.workbench.onEngineStderr(({ conversationId, messageId, stderr }) => {
-          setConversations((current) =>
-            current.map((conversation) =>
-              conversation.id === conversationId
-                ? {
-                    ...conversation,
-                    messages: conversation.messages.map((message) =>
-                      message.id === messageId ? { ...message, output: stderr ?? message.output } : message
-                    )
-                  }
-                : conversation
-            )
-          );
-        })
-      : () => {};
-    const offEnginePermission = window.workbench.onEnginePermission
-      ? window.workbench.onEnginePermission(() => {
-          // (No surface yet — see Claude permission handler above.)
-        })
-      : () => {};
-    const offEngineDone = window.workbench.onEngineDone ? window.workbench.onEngineDone(syncFinal) : () => {};
-    const offEngineError = window.workbench.onEngineError ? window.workbench.onEngineError(syncFinal) : () => {};
-    const offEngineSessionId = window.workbench.onEngineSessionId
-      ? window.workbench.onEngineSessionId((event) => {
-          // Persist the captured session id back into the conversation so future
-          // turns can resume the same Codex/OpenCode session.
-          updateConversation(event.conversationId, (conversation) => {
-            if (event.engine === "Codex CLI" && event.sessionId) {
-              return { ...conversation, codexSessionId: event.sessionId };
-            }
-            if (event.engine === "OpenCode" && event.sessionId) {
-              return { ...conversation, opencodeSessionId: event.sessionId };
-            }
-            return conversation;
-          });
-          void persistConversation(event.conversationId, {});
-        })
-      : () => {};
 
     const offOpenDirectory = window.workbench.onOpenDirectory(({ directory }) => {
       void openConversationInDirectory(directory);
@@ -539,9 +478,9 @@ export function App() {
     window.workbench.notifyReady();
 
     // Global keyboard handler: only copies selected text from non-editable
-    // areas (chat messages). Cut / paste are handled by xterm's own
-    // attachCustomKeyEventHandler and the textarea/input default behavior.
-    const handleKeydown = (event: KeyboardEvent) => {
+    // areas. Cut / paste inside the terminal are handled by xterm's own
+    // attachCustomKeyEventHandler.
+    const handleKeydown = (event: globalThis.KeyboardEvent) => {
       const isLetter = event.key.length === 1;
       const isCopy = (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && isLetter && event.key.toLowerCase() === "c";
       if (!isCopy) return;
@@ -555,24 +494,11 @@ export function App() {
       event.preventDefault();
       void window.workbench.clipboardWriteText(text);
     };
-    window.addEventListener("keydown", handleKeydown as unknown as EventListener);
+    window.addEventListener("keydown", handleKeydown);
 
     return () => {
       mounted = false;
       offChanged();
-      offChunk();
-      offStderr();
-      offPermission();
-      offSelectMessageContent();
-      offCopyMessageContent();
-      offDone();
-      offError();
-      offEngineChunk();
-      offEngineStderr();
-      offEnginePermission();
-      offEngineDone();
-      offEngineError();
-      offEngineSessionId();
       offUpdaterChecking();
       offUpdaterAvailable();
       offUpdaterProgress();
@@ -580,10 +506,14 @@ export function App() {
       offUpdaterNotAvailable();
       offUpdaterError();
       offOpenDirectory();
-      streamTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-      streamTimersRef.current.clear();
-      streamQueuesRef.current.clear();
-      window.removeEventListener("keydown", handleKeydown as unknown as EventListener);
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, []);
+
+  // Pending toast timer is cleared on unmount.
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
     };
   }, []);
 
@@ -597,9 +527,15 @@ export function App() {
     setConversations((current) => current.map((conversation) => (conversation.id === id ? updater(conversation) : conversation)));
   }
 
+  // Consecutive toasts reset the dismissal timer instead of stacking timers
+  // that clear each other's message early.
   function showToast(message: string) {
     setToast(message);
-    window.setTimeout(() => setToast(null), 2600);
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 2600);
   }
 
   function openNewConversationModal() {
@@ -611,18 +547,18 @@ export function App() {
     setShowNewConversationModal(true);
   }
 
-  async function confirmNewConversation(engine: Engine, sandbox: Sandbox, directory: string) {
+  async function confirmNewConversation(engine: Engine, sandbox: Sandbox, directory: string, outputDir: string) {
     setShowNewConversationModal(false);
     if (window.workbench) {
       const items = await window.workbench.createConversation({
         engine,
         sandbox,
-        directory: directory || undefined
+        directory: directory || undefined,
+        outputDir: outputDir || undefined
       });
-      setConversations(items);
-      setActiveId(items[0]?.id ?? "");
-      setDraft("");
-      setComposerFiles([]);
+      const merged = withCreatedFirst(items, conversations);
+      setConversations(merged);
+      setActiveId(merged[0]?.id ?? "");
       return;
     }
 
@@ -640,23 +576,21 @@ export function App() {
       attachments: [],
       messages: [],
       engine,
-      sandbox
+      sandbox,
+      outputDir: outputDir || ""
     };
     setConversations((current) => [next, ...current]);
     setActiveId(next.id);
-    setDraft("");
-    setComposerFiles([]);
   }
 
-  // Legacy entry point kept for keyboard shortcuts / direct invocations that
-  // don't want to show the picker — creates a default Claude session.
+  // Legacy entry point kept for direct invocations that don't want to show the
+  // picker — creates a default Claude session.
   async function createConversation() {
     if (window.workbench) {
       const items = await window.workbench.createConversation();
-      setConversations(items);
-      setActiveId(items[0]?.id ?? "");
-      setDraft("");
-      setComposerFiles([]);
+      const merged = withCreatedFirst(items, conversations);
+      setConversations(merged);
+      setActiveId(merged[0]?.id ?? "");
       return;
     }
 
@@ -675,8 +609,6 @@ export function App() {
     };
     setConversations((current) => [next, ...current]);
     setActiveId(next.id);
-    setDraft("");
-    setComposerFiles([]);
   }
 
   // Launched from the Finder toolbar (or folder dropped on the app): open a fresh
@@ -684,10 +616,9 @@ export function App() {
   async function openConversationInDirectory(directory: string) {
     if (!window.workbench) return;
     const items = await window.workbench.createConversation(directory);
-    setConversations(items);
-    setActiveId(items[0]?.id ?? "");
-    setDraft("");
-    setComposerFiles([]);
+    const merged = withCreatedFirst(items, conversations);
+    setConversations(merged);
+    setActiveId(merged[0]?.id ?? "");
   }
 
   async function deleteConversation(id: string) {
@@ -697,22 +628,14 @@ export function App() {
     if (window.workbench) {
       const remaining = await window.workbench.deleteConversation(id);
       setConversations(remaining);
-      if (activeId === id) {
-        setActiveId(remaining[0]?.id ?? "");
-        setDraft("");
-        setComposerFiles([]);
-      }
+      if (activeId === id) setActiveId(remaining[0]?.id ?? "");
       showToast(`已删除「${target.title}」和本地记录`);
       return;
     }
 
     const remaining = conversations.filter((conversation) => conversation.id !== id);
     setConversations(remaining);
-    if (activeId === id) {
-      setActiveId(remaining[0]?.id ?? "");
-      setDraft("");
-      setComposerFiles([]);
-    }
+    if (activeId === id) setActiveId(remaining[0]?.id ?? "");
     showToast(`已删除「${target.title}」和本地记录`);
   }
 
@@ -721,13 +644,32 @@ export function App() {
     const next = await window.workbench.pickDirectory();
     if (!next) return;
     await window.workbench.updateConversation(id, { directory: next });
-    showToast("工作目录已更新；当前 PTY 仍跑在旧目录，新建会话会使用新目录");
+    showToast("工作目录已更新；当前终端仍跑在旧目录，新挂载的会话会使用新目录");
+  }
+
+  // Output directory: applied via a session-start prompt the next time the
+  // conversation's terminal spawns fresh (see TerminalPane). Picking one pops
+  // the explainer so the mechanism and its cost are never a surprise.
+  async function changeConversationOutputDir(id: string) {
+    if (!window.workbench?.pickDirectory) return;
+    const next = await window.workbench.pickDirectory();
+    if (!next) return;
+    const items = await window.workbench.updateConversation(id, { outputDir: next });
+    setConversations(items);
+    setShowOutputDirNotice(true);
+  }
+
+  async function clearConversationOutputDir(id: string) {
+    if (!window.workbench) return;
+    const items = await window.workbench.updateConversation(id, { outputDir: "" });
+    setConversations(items);
+    showToast("已清除输出目录，恢复跟随工作目录");
   }
 
   function togglePin(id: string) {
     const conversation = conversations.find((item) => item.id === id);
     if (!conversation) return;
-    updateConversation(id, (item) => ({ ...item, pinned: !item.pinned }));
+    updateConversation(id, (item) => ({ ...item, pinned: !conversation.pinned }));
     void persistConversation(id, { pinned: !conversation.pinned });
   }
 
@@ -746,788 +688,500 @@ export function App() {
     setRenameValue("");
   }
 
-  async function pickFiles() {
-    if (window.workbench?.pickFiles && activeConversation) {
-      const picked = await window.workbench.pickFiles(activeConversation.id);
-      addAttachments(picked);
-      return;
-    }
+  const settingsTitle =
+    settingsSection === "theme"
+      ? "主题"
+      : settingsSection === "behavior"
+        ? "行为"
+        : "关于";
 
-    fileInputRef.current?.click();
-  }
-
-  function addAttachments(files: Attachment[]) {
-    if (files.length === 0) return;
-    setComposerFiles((current) => {
-      const existing = new Set(current.map((file) => file.path));
-      return [...current, ...files.filter((file) => !existing.has(file.path))];
-    });
-  }
-
-  function handleBrowserFiles(event: ChangeEvent<HTMLInputElement>) {
-    const selected = Array.from(event.target.files ?? []).map((file) => ({
-      id: makeId("att"),
-      name: file.name,
-      path: `local://${file.name}`,
-      size: formatFileSize(file.size)
-    }));
-    addAttachments(selected);
-    event.target.value = "";
-  }
-
-  function handleDrop(event: DragEvent<HTMLElement>) {
-    event.preventDefault();
-    dragDepthRef.current = 0;
-    setDragging(false);
-    const dropped = Array.from(event.dataTransfer.files);
-    const filePaths = dropped
-      .map((file) => (file as File & { path?: string }).path)
-      .filter((filePath): filePath is string => Boolean(filePath));
-
-    if (window.workbench?.copyFiles && activeConversation && filePaths.length > 0) {
-      void window.workbench.copyFiles(activeConversation.id, filePaths).then(addAttachments);
-      return;
-    }
-
-    const files = dropped.map((file) => ({
-      id: makeId("att"),
-      name: file.name,
-      path: "path" in file ? String((file as File & { path?: string }).path ?? `local://${file.name}`) : `local://${file.name}`,
-      size: formatFileSize(file.size)
-    }));
-    addAttachments(files);
-  }
-
-  async function sendMessage() {
-    const body = draft.trim();
-    if ((!body && composerFiles.length === 0) || !activeConversation || sending) return;
-
-    if (window.workbench?.sendToEngine || window.workbench?.sendToClaude) {
-      const files = composerFiles;
-      const previousDraft = draft;
-      setDraft("");
-      setComposerFiles([]);
-      if (textAreaRef.current) textAreaRef.current.style.height = "110px";
-      setSending(true);
-      const payload = {
-        conversationId: activeConversation.id,
-        prompt: body || "请查看这些附件。",
-        attachments: files
-      };
-      // Route to the right channel based on the conversation's engine. Claude
-      // keeps its existing dedicated channel; Codex / OpenCode go through the
-      // generic engine channel.
-      const engine = activeConversation.engine || "claude";
-      const sender =
-        engine === "claude"
-          ? window.workbench.sendToClaude
-          : window.workbench.sendToEngine || window.workbench.sendToClaude;
-      try {
-        const result = await sender(payload);
-        if (!result.ok) throw new Error(result.error || `${engineLabel(engine)} 没有接受这次任务。`);
-      } catch (error) {
-        setDraft(previousDraft);
-        setComposerFiles(files);
-        showToast(error instanceof Error ? error.message : "发送失败，请重新试一次。");
-      } finally {
-        setSending(false);
-      }
-      return;
-    }
-
-    const fileLines = composerFiles.map((file) => `- ${file.path}`).join("\n");
-    const userBody = [body, fileLines ? `\n附件路径：\n${fileLines}` : ""].filter(Boolean).join("\n");
-    const assistantBody = composerFiles.length
-      ? "我会把这些附件路径一起传给 Claude Code，并把关键输出整理回当前会话。"
-      : "已收到。我会把这条任务发送给 Claude Code，并在这里保留整理后的关键结果。";
-
-    updateConversation(activeConversation.id, (conversation) => ({
-      ...conversation,
-      updatedAt: "刚刚",
-      status: "processing",
-      attachments: [...conversation.attachments, ...composerFiles],
-      messages: [
-        ...conversation.messages,
-        {
-          id: makeId("msg"),
-          role: "user",
-          body: userBody,
-          meta: "你 · 刚刚"
-        },
-        {
-          id: makeId("msg"),
-          role: "assistant",
-          body: assistantBody,
-          meta: "Claude Code · 处理中",
-          output: "queued task\nattached paths forwarded\nwaiting for local runner"
-        }
-      ]
-    }));
-
-    setDraft("");
-    setComposerFiles([]);
-    if (textAreaRef.current) textAreaRef.current.style.height = "110px";
-  }
-
-  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      sendMessage();
-    }
-  }
-
-  function resizeComposer() {
-    const element = textAreaRef.current;
-    if (!element) return;
-    element.style.height = "110px";
-    element.style.height = `${Math.min(Math.max(element.scrollHeight, 110), 276)}px`;
-  }
-
-  function jumpToPreviousUserMessage() {
-    const scroll = scrollRef.current;
-    if (!scroll) return;
-
-    const userMessages = Array.from(scroll.querySelectorAll<HTMLElement>(".message-user"));
-    if (userMessages.length === 0) return;
-
-    const currentTop = scroll.scrollTop;
-    const target =
-      [...userMessages].reverse().find((message) => message.offsetTop < currentTop - 12) ?? userMessages[0];
-
-    scroll.scrollTo({
-      top: Math.max(0, target.offsetTop - 20),
-      behavior: "smooth"
-    });
-  }
-
-  function selectMessageContentAt(x: number, y: number) {
-    const target = document.elementFromPoint(x, y);
-    const message = target?.closest(".message-content");
-    if (!message) return;
-
-    const contentNodes = Array.from(message.querySelectorAll(".message-body, pre")).filter((node) =>
-      node.textContent?.trim()
-    );
-    if (contentNodes.length === 0) return;
-
-    const range = document.createRange();
-    range.setStartBefore(contentNodes[0]);
-    range.setEndAfter(contentNodes[contentNodes.length - 1]);
-
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  }
-
-  async function copyMessageContentAt(x: number, y: number) {
-    const target = document.elementFromPoint(x, y);
-    const message = target?.closest(".message-content");
-    if (!message) return;
-
-    const contentNodes = Array.from(message.querySelectorAll(".message-body, pre")).filter((node) =>
-      node.textContent?.trim()
-    );
-    if (contentNodes.length === 0) return;
-
-    const text = contentNodes.map((node) => node.textContent ?? "").join("\n\n");
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // Fallback: select the text so the user can Ctrl+C
-      const range = document.createRange();
-      range.setStartBefore(contentNodes[0]);
-      range.setEndAfter(contentNodes[contentNodes.length - 1]);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    }
-  }
-
-  async function pickChatBackgroundImage() {
-    if (!window.workbench?.pickBackgroundImage) return;
-    const picked = await window.workbench.pickBackgroundImage();
-    if (!picked) return;
-    setAppearance((current) => ({
-      ...current,
-      chatImagePath: picked.path,
-      chatImageUrl: picked.url,
-      chatVideoPath: "",
-      chatVideoUrl: ""
-    }));
-  }
-
-  function removeChatBackgroundImage() {
-    setAppearance((current) => ({
-      ...current,
-      chatImagePath: "",
-      chatImageUrl: ""
-    }));
-  }
-
-  async function pickChatBackgroundVideo() {
-    if (!window.workbench?.pickBackgroundVideo) return;
-    const picked = await window.workbench.pickBackgroundVideo();
-    if (!picked) return;
-    setAppearance((current) => ({
-      ...current,
-      chatImagePath: "",
-      chatImageUrl: "",
-      chatVideoPath: picked.path,
-      chatVideoUrl: picked.url
-    }));
-  }
-
-  function removeChatBackgroundVideo() {
-    setAppearance((current) => ({
-      ...current,
-      chatVideoPath: "",
-      chatVideoUrl: ""
-    }));
-  }
+  const settingsDescription =
+    settingsSection === "theme"
+      ? "选择工作台的整体配色与质感，12 个主题即时生效并自动保存。"
+      : settingsSection === "behavior"
+        ? "配置点击关闭按钮时的行为，以及界面动效的节奏。"
+        : "版本信息和更新检查。";
 
   return (
-    <main
-      className={`app-shell ${appView === "settings" ? "settings-view" : ""} ${dragging ? "is-dragging" : ""}`}
-      style={appStyle}
-      onDragEnter={(event) => {
-        event.preventDefault();
-        dragDepthRef.current += 1;
-        setDragging(true);
-      }}
-      onDragOver={(event) => {
-        event.preventDefault();
-        setDragging(true);
-      }}
-      onDragLeave={(event) => {
-        event.preventDefault();
-        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-        if (dragDepthRef.current === 0) setDragging(false);
-      }}
-      onDrop={handleDrop}
-    >
-      <div className="top-window-drag" aria-hidden="true" />
-      <aside className="sidebar" aria-label={appView === "settings" ? "设置目录" : "会话列表"}>
-        <div className="sidebar-media" aria-hidden="true">
-          {appearance.chatVideoUrl ? (
-            <video className="sidebar-media-video" src={appearance.chatVideoUrl} autoPlay muted loop playsInline />
-          ) : null}
-          <div className="sidebar-media-overlay" />
+    <main className={`shell ${panelCollapsed ? "is-collapsed" : ""}`}>
+      <aside className="card sidebar-card" aria-label="会话列表" ref={sidebarRef}>
+        <div className="sidebar-top">
+          <span className="brand-mark" title="Clawd Station">
+            <img className="brand-logo" src={clawdWizard} alt="Clawd Station" />
+          </span>
+          <span className="brand-name">Clawd Station</span>
+          <button
+            className="icon-button accent"
+            type="button"
+            data-flip="new"
+            onClick={openNewConversationModal}
+            aria-label="新建对话"
+            title="新建对话"
+          >
+            <Plus aria-hidden="true" />
+          </button>
         </div>
-        <div className="window-drag" />
-        {appView === "settings" ? (
-          <>
-            <label className="search-field">
-              <Search aria-hidden="true" />
-              <span className="sr-only">搜索设置</span>
-              <input placeholder="搜索设置..." />
-            </label>
-            <nav className="settings-nav" aria-label="设置分类">
-              <p>个人</p>
-              <button
-                className={`settings-nav-item ${settingsSection === "background" ? "is-active" : ""}`}
-                type="button"
-                onClick={() => setSettingsSection("background")}
-              >
-                <ImageIcon aria-hidden="true" />
-                背景
-              </button>
-              <button
-                className={`settings-nav-item ${settingsSection === "loading" ? "is-active" : ""}`}
-                type="button"
-                onClick={() => setSettingsSection("loading")}
-              >
-                <LoaderCircle aria-hidden="true" />
-                Loading
-              </button>
-              <button
-                className={`settings-nav-item ${settingsSection === "behavior" ? "is-active" : ""}`}
-                type="button"
-                onClick={() => setSettingsSection("behavior")}
-              >
-                <Settings aria-hidden="true" />
-                行为
-              </button>
-              <button
-                className={`settings-nav-item ${settingsSection === "about" ? "is-active" : ""}`}
-                type="button"
-                onClick={() => setSettingsSection("about")}
-              >
-                <CheckCircle2 aria-hidden="true" />
-                关于
-              </button>
-              <button
-                className={`settings-nav-item ${settingsSection === "record" ? "is-active" : ""}`}
-                type="button"
-                onClick={() => setSettingsSection("record")}
-              >
-                <Archive aria-hidden="true" />
-                本地记录
-              </button>
-            </nav>
-          </>
-        ) : (
-          <>
-            <header className="sidebar-header">
-              <div className="brand-lockup">
-                <img className="brand-mark" src={clawdWizard} alt="Clawd Station" />
-                <span className="brand-name">Clawd Station</span>
-              </div>
-              <button className="icon-button primary" type="button" onClick={openNewConversationModal} aria-label="新建对话">
-                <Plus aria-hidden="true" />
-              </button>
-            </header>
 
-            <label className="search-field">
-              <Search aria-hidden="true" />
-              <span className="sr-only">搜索对话</span>
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话或目录" />
-            </label>
+        <label className="search-field">
+          <Search aria-hidden="true" />
+          <span className="sr-only">搜索对话</span>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话或目录" />
+        </label>
 
-            <div className="session-list" role="list">
-              {filteredConversations.length === 0 ? (
-                <div className="sidebar-empty">
-                  <Search aria-hidden="true" />
-                  <p>没有匹配的本地会话</p>
-                </div>
-              ) : (
-                filteredConversations.map((conversation) => (
-                  <article
-                    className={`session-item ${conversation.id === activeId ? "is-active" : ""}`}
-                    key={conversation.id}
-                    role="listitem"
-                  >
-                    <button className="session-main" type="button" onClick={() => setActiveId(conversation.id)}>
-                      <span className="session-title-row">
-                        {conversation.pinned ? <Pin className="pin-mark" aria-label="已置顶" /> : null}
-                        <span className="session-engine-badge">
-                          <EngineBadge engine={conversation.engine} />
-                        </span>
-                        {editingId === conversation.id ? (
-                          <input
-                            className="rename-input"
-                            value={renameValue}
-                            onChange={(event) => setRenameValue(event.target.value)}
-                            onBlur={() => finishRename(conversation.id)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") finishRename(conversation.id);
-                              if (event.key === "Escape") setEditingId(null);
-                            }}
-                            autoFocus
-                            onClick={(event) => event.stopPropagation()}
-                          />
-                        ) : (
-                          <strong>{conversation.title}</strong>
-                        )}
+        <div className="session-list" role="list">
+          {filteredConversations.length === 0 ? (
+            <div className="panel-empty">
+              <Search aria-hidden="true" />
+              <p>{conversations.length === 0 ? "还没有会话。\n从上方 + 新建一个开始。" : "没有匹配的会话"}</p>
+            </div>
+          ) : (
+            filteredConversations.map((conversation) => (
+              <article
+                className={`session-item ${conversation.id === activeId ? "is-active" : ""}`}
+                key={conversation.id}
+                role="listitem"
+                data-about-id={conversation.id}
+              >
+                <button
+                  className="session-main"
+                  type="button"
+                  onClick={() => setActiveId(conversation.id)}
+                  onDoubleClick={() => beginRename(conversation)}
+                >
+                  <span className="session-title-row">
+                    {conversation.pinned ? <Pin className="pin-mark" aria-label="已置顶" /> : null}
+                    <EngineBadge engine={conversation.engine} />
+                    {editingId === conversation.id ? (
+                      <input
+                        className="rename-input"
+                        value={renameValue}
+                        onChange={(event) => setRenameValue(event.target.value)}
+                        onBlur={() => finishRename(conversation.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") finishRename(conversation.id);
+                          if (event.key === "Escape") setEditingId(null);
+                        }}
+                        autoFocus
+                        onClick={(event) => event.stopPropagation()}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                      />
+                    ) : (
+                      <strong>{conversation.title}</strong>
+                    )}
+                    <span className="chip session-sandbox-chip" title={`权限: ${conversation.sandbox || "default"}`}>
+                      {conversation.sandbox || "default"}
+                    </span>
+                  </span>
+                  <span className="session-meta">{conversation.updatedAt}</span>
+                </button>
+                <div className={`session-about ${aboutId === conversation.id ? "is-open" : ""}`}>
+                  <div className="session-about-inner">
+                    <div className="session-about-row">
+                      <span className="session-about-label">引擎</span>
+                      <span className="session-about-value">
+                        <EngineBadge engine={conversation.engine} />
+                        {engineLabel(conversation.engine)}
                       </span>
-                      <span className="session-meta">
-                        <Clock3 aria-hidden="true" />
-                        {conversation.updatedAt}
+                    </div>
+                    <div className="session-about-row">
+                      <span className="session-about-label">权限模式</span>
+                      <span className="chip">{conversation.sandbox || "default"}</span>
+                    </div>
+                    <div className="session-about-row">
+                      <span className="session-about-label">工作目录</span>
+                      <span className="session-about-dir" title={conversation.directory || "~"}>
+                        <FolderOpen aria-hidden="true" />
+                        <span className="session-about-path">{conversation.directory || "~"}</span>
                       </span>
-                    </button>
-                    <div className="session-actions" aria-label={`${conversation.title} 操作`}>
                       <button
+                        className="session-about-edit"
                         type="button"
-                        onClick={() => togglePin(conversation.id)}
-                        aria-label={conversation.pinned ? "取消置顶" : "置顶"}
+                        onClick={() => void changeConversationDirectory(conversation.id)}
                       >
-                        {conversation.pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
-                      </button>
-                      <button type="button" onClick={() => beginRename(conversation)} aria-label="重命名">
-                        <PencilLine aria-hidden="true" />
-                      </button>
-                      <button type="button" onClick={() => deleteConversation(conversation.id)} aria-label="删除对话和本地记录">
-                        <Trash2 aria-hidden="true" />
+                        修改
                       </button>
                     </div>
-                  </article>
-                ))
-              )}
-            </div>
+                    <div className="session-about-row">
+                      <span className="session-about-label">输出目录</span>
+                      <span className="session-about-dir" title={conversation.outputDir || "跟随工作目录"}>
+                        <FolderOpen aria-hidden="true" />
+                        <span className="session-about-path">{conversation.outputDir || "跟随工作目录"}</span>
+                      </span>
+                      <button
+                        className="session-about-edit"
+                        type="button"
+                        onClick={() => void changeConversationOutputDir(conversation.id)}
+                      >
+                        修改
+                      </button>
+                      {conversation.outputDir ? (
+                        <button
+                          className="session-about-edit"
+                          type="button"
+                          onClick={() => void clearConversationOutputDir(conversation.id)}
+                        >
+                          清除
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+                <div className="session-actions" aria-label={`${conversation.title} 操作`}>
+                  <button
+                    type="button"
+                    onClick={() => togglePin(conversation.id)}
+                    aria-label={conversation.pinned ? "取消置顶" : "置顶"}
+                  >
+                    {conversation.pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+                  </button>
+                  <button type="button" onClick={() => beginRename(conversation)} aria-label="重命名">
+                    <PencilLine aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAboutId((current) => (current === conversation.id ? null : conversation.id))}
+                    aria-label="关于此会话"
+                    aria-expanded={aboutId === conversation.id}
+                  >
+                    <Info aria-hidden="true" />
+                  </button>
+                  <button type="button" onClick={() => deleteConversation(conversation.id)} aria-label="删除对话和本地记录">
+                    <Trash2 aria-hidden="true" />
+                  </button>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
 
-            <div className="sidebar-footer">
-              <button className="settings-trigger" type="button" onClick={() => setAppView("settings")} aria-label="打开设置">
-                <Settings aria-hidden="true" />
-                <span>设置</span>
-              </button>
-            </div>
-          </>
-        )}
+        <div className="sidebar-bottom">
+          <button
+            className="icon-button"
+            type="button"
+            data-flip="collapse"
+            onClick={togglePanelCollapsed}
+            aria-label={panelCollapsed ? "展开会话面板" : "折叠会话面板"}
+            title={panelCollapsed ? "展开会话面板" : "折叠会话面板"}
+          >
+            {panelCollapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
+          </button>
+          <button
+            className={`icon-button ${appView === "settings" ? "is-active" : ""}`}
+            type="button"
+            data-flip="settings"
+            onClick={() => setAppView((current) => (current === "settings" ? "chat" : "settings"))}
+            aria-label={appView === "settings" ? "关闭设置" : "打开设置"}
+            title={appView === "settings" ? "关闭设置" : "打开设置"}
+          >
+            <Settings aria-hidden="true" />
+          </button>
+          {/* Frameless window controls live in the sidebar footer. Close still
+              respects the user's closeBehavior setting (quit vs hide-to-tray). */}
+          <button
+            className="icon-button"
+            type="button"
+            data-flip="minimize"
+            onClick={() => window.workbench?.minimizeWindow?.()}
+            aria-label="最小化"
+            title="最小化"
+          >
+            <Minus aria-hidden="true" />
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            data-flip="maximize"
+            onClick={() => window.workbench?.toggleMaximizeWindow?.()}
+            aria-label="最大化 / 还原"
+            title="最大化 / 还原"
+          >
+            <Square aria-hidden="true" />
+          </button>
+          <button
+            className="icon-button wc-close"
+            type="button"
+            data-flip="close"
+            onClick={() => window.workbench?.closeWindow?.()}
+            aria-label={closeBehavior === "tray" ? "隐藏到托盘" : "关闭应用"}
+            title={closeBehavior === "tray" ? "隐藏到托盘" : "关闭应用"}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
       </aside>
 
-      {/* Single X — context-aware: in settings it closes settings;
-          in chat it closes the window (quit or hide-to-tray). */}
-      <button
-        className="icon-button window-close"
-        type="button"
-        onClick={() => {
-          if (appView === "settings") {
-            setAppView("chat");
-          } else {
-            window.workbench?.closeWindow?.();
-          }
-        }}
-        aria-label={
-          appView === "settings"
-            ? "关闭设置"
-            : closeBehavior === "tray"
-              ? "隐藏到托盘"
-              : "关闭应用"
-        }
-        title={
-          appView === "settings"
-            ? "关闭设置"
-            : closeBehavior === "tray"
-              ? "隐藏到托盘"
-              : "关闭应用"
-        }
-      >
-        <X aria-hidden="true" />
-      </button>
-
-      <section className="workspace" aria-label={appView === "settings" ? "设置" : "当前会话"}>
-        {/* Chat view stays mounted at all times — the settings panel overlays
-            it. Keeping TerminalDeck (xterm + node-pty) mounted means the
-            Codex / OpenCode / Claude Code sessions survive a settings visit
-            instead of being torn down and re-spawned on every toggle. */}
-        {appView === "chat" ? (
-          <header className="topbar">
-            <div className="topbar-title">
-              <div>
-                <h2>
-                  {activeConversation?.title ?? "没有会话"}
-                  {activeConversation ? (
-                    <span className="workspace-engine-strip" title={`引擎: ${engineLabel(activeConversation.engine)} · 权限: ${activeConversation.sandbox || "default"}`}>
-                      <EngineBadge engine={activeConversation.engine} size="md" />
-                      <span>{engineLabel(activeConversation.engine)}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{activeConversation.sandbox || "default"}</span>
-                    </span>
-                  ) : null}
-                </h2>
-                <p>
-                  <FolderOpen aria-hidden="true" />
-                  {activeConversation ? (
-                    <button
-                      className="directory-link"
-                      type="button"
-                      onClick={() => changeConversationDirectory(activeConversation.id)}
-                      title={`当前工作目录：${activeConversation.directory ?? ""}\n点击修改`}
-                    >
-                      <span className="directory-link-name">
-                        {formatWorkingDirectory(activeConversation.directory)}
-                      </span>
-                      <PencilLine aria-hidden="true" className="directory-link-edit" />
-                    </button>
-                  ) : (
-                    <span className="directory-link-muted">工作目录</span>
-                  )}
-                </p>
-              </div>
+      <section className="card stage-card" aria-label="当前会话">
+        <div className="terminal-area">
+          {/* TerminalDeck stays mounted across settings visits (settings is an
+              overlay), so xterm + node-pty sessions are never torn down. */}
+          <TerminalDeck activeId={activeConversation?.id ?? ""} sessions={terminalSessions} xtermTheme={activeTheme.xterm} />
+          {conversations.length === 0 ? (
+            <div className="stage">
+              <img className="stage-logo" src={clawdWizard} alt="" />
+              <p>一个安静的终端工作台，把 Claude Code、Codex、OpenCode、Kimi 装进同一个窗口。</p>
+              <button className="button-primary" type="button" onClick={openNewConversationModal}>
+                <Plus aria-hidden="true" />
+                新建会话
+              </button>
+              {noEngineInstalled ? (
+                <div className="stage-install-hint">
+                  <p>检测到你还没有安装任何 CLI</p>
+                  <p className="stage-install-engines">Claude Code · Codex CLI · Kimi CLI · OpenCode</p>
+                  <p>点上方「新建会话」，可按引导安装</p>
+                </div>
+              ) : null}
             </div>
-            <div className="topbar-actions" />
-          </header>
-        ) : null}
-
-        <div className="conversation-shell terminal-shell">
-          <TerminalDeck
-            activeId={activeConversation?.id ?? ""}
-            sessions={sortedConversations.map((conversation) => ({
-              id: conversation.id,
-              cwd: conversation.directory || "~",
-              engine: conversation.engine
-            }))}
-          />
-          <input ref={fileInputRef} className="hidden-input" type="file" multiple onChange={handleBrowserFiles} />
+          ) : !activeConversation ? (
+            <div className="stage">
+              <p className="stage-hint">从左侧选择一个会话，或按 + 新建。</p>
+            </div>
+          ) : null}
         </div>
+      </section>
 
-        {/* Settings overlay — sits above the (always-mounted) terminal shell.
-            Keeps xterm + node-pty alive across settings visits. */}
-        {appView === "settings" ? (
-          <div className="settings-page">
-            <div className="settings-content">
-              <header className="settings-page-header">
-                <h2>
-                  {settingsSection === "background"
-                    ? "背景"
-                    : settingsSection === "loading"
-                      ? "Loading"
-                      : settingsSection === "behavior"
-                        ? "行为"
-                        : settingsSection === "about"
-                          ? "关于"
-                          : "本地记录"}
-                </h2>
-                <p>
-                  {settingsSection === "background"
-                    ? "调整对话文本大框的背景颜色、图片和透明度。"
-                    : settingsSection === "loading"
-                      ? "选择 Claude Code 处理任务时，小 logo 位置显示的 loading 动画。"
-                      : settingsSection === "behavior"
-                        ? "配置点击关闭按钮时的行为。"
-                        : settingsSection === "about"
-                          ? "版本信息和更新检查。"
-                          : "当前会话的本地状态和元数据。"}
-                </p>
-              </header>
-              {settingsSection === "background" ? (
-                <section className="settings-card" aria-label="背景设置">
-                  <label className="setting-row">
-                    <span>对话框背景</span>
-                    <span className="color-control">
+      {/* Settings overlay — a floating card covering only the stage area, so
+          the sidebar (collapse / settings / window keys) stays reachable.
+          TerminalDeck stays mounted below. The overlay itself also stays
+          mounted: toggling is-open gives open and close symmetric motion. */}
+      <div
+        className={`card settings-overlay ${appView === "settings" ? "is-open" : ""}`}
+        aria-hidden={appView !== "settings"}
+      >
+        <button
+          className="icon-button settings-close"
+          type="button"
+          onClick={() => setAppView("chat")}
+          aria-label="关闭设置"
+          title="关闭设置"
+          tabIndex={appView === "settings" ? 0 : -1}
+        >
+          <X aria-hidden="true" />
+        </button>
+        <nav className="settings-nav-col" aria-label="设置分类">
+          <p className="settings-nav-title">设置</p>
+            <button
+              className={`settings-nav-item ${settingsSection === "theme" ? "is-active" : ""}`}
+              type="button"
+              onClick={() => setSettingsSection("theme")}
+            >
+              <Palette aria-hidden="true" />
+              主题
+            </button>
+            <button
+              className={`settings-nav-item ${settingsSection === "behavior" ? "is-active" : ""}`}
+              type="button"
+              onClick={() => setSettingsSection("behavior")}
+            >
+              <Settings aria-hidden="true" />
+              行为
+            </button>
+            <button
+              className={`settings-nav-item ${settingsSection === "about" ? "is-active" : ""}`}
+              type="button"
+              onClick={() => setSettingsSection("about")}
+            >
+              <CheckCircle2 aria-hidden="true" />
+              关于
+            </button>
+          </nav>
+
+          <div className="settings-content">
+            <header>
+              <h2>{settingsTitle}</h2>
+              <p>{settingsDescription}</p>
+            </header>
+
+            {settingsSection === "theme" ? (
+              <section className="settings-card theme-settings-card" aria-label="主题设置">
+                <div className="theme-options" role="radiogroup" aria-label="选择主题">
+                  {THEMES.map((theme) => {
+                    const isActive = appearance.theme === theme.id;
+                    return (
                       <button
-                        className="color-swatch"
-                        type="button"
-                        style={{ background: appearance.chatBackground }}
-                        onClick={() => colorInputRef.current?.click()}
-                        aria-label="选择对话框背景色"
-                      />
-                      <input
-                        ref={colorInputRef}
-                        type="color"
-                        value={appearance.chatBackground}
-                        onChange={(event) =>
-                          setAppearance((current) => ({
-                            ...current,
-                            chatBackground: event.target.value
-                          }))
-                        }
-                        aria-label="选择对话框背景色"
-                      />
-                    </span>
-                  </label>
-                  <div className="setting-row">
-                    <span>背景图片</span>
-                    <div className="image-control">
-                      {appearance.chatImageUrl ? (
-                        <span
-                          className="image-preview"
-                          style={{ backgroundImage: `url("${appearance.chatImageUrl}")` }}
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <span className="image-preview is-empty" aria-hidden="true" />
-                      )}
-                      <div>
-                        <button className="settings-action" type="button" onClick={pickChatBackgroundImage}>
-                          选择图片
-                        </button>
-                        {appearance.chatImageUrl ? (
-                          <button className="settings-action subtle" type="button" onClick={removeChatBackgroundImage}>
-                            移除图片
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="setting-row">
-                    <span>背景视频</span>
-                    <div className="image-control">
-                      {appearance.chatVideoUrl ? (
-                        <span className="video-preview" aria-hidden="true">
-                          <video src={appearance.chatVideoUrl} muted loop playsInline />
-                        </span>
-                      ) : (
-                        <span className="video-preview is-empty" aria-hidden="true" />
-                      )}
-                      <div>
-                        <button className="settings-action" type="button" onClick={pickChatBackgroundVideo}>
-                          选择视频
-                        </button>
-                        {appearance.chatVideoUrl ? (
-                          <button className="settings-action subtle" type="button" onClick={removeChatBackgroundVideo}>
-                            移除视频
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                  <label className="setting-slider">
-                    <span>{appearance.chatVideoUrl ? "视频透明度" : appearance.chatImageUrl ? "图片透明度" : "背景透明度"}</span>
-                    <span className="compact-slider-control">
-                      <input
-                        type="range"
-                        min="20"
-                        max="100"
-                        step="1"
-                        value={appearance.chatOpacity}
-                        style={{ "--slider-progress": `${appearance.chatOpacity}%` } as CSSProperties}
-                        onChange={(event) =>
-                          setAppearance((current) => ({
-                            ...current,
-                            chatOpacity: Number(event.target.value)
-                          }))
-                        }
-                      />
-                      <strong>{appearance.chatOpacity}%</strong>
-                    </span>
-                  </label>
-                  <button className="reset-appearance" type="button" onClick={() => setAppearance(defaultAppearance)}>
-                    <RotateCcw aria-hidden="true" />
-                    重置背景
-                  </button>
-                </section>
-              ) : settingsSection === "loading" ? (
-                <section className="settings-card" aria-label="Loading 设置">
-                  <div className="loading-options" role="radiogroup" aria-label="选择 loading 动画">
-                    {loadingOptions.map((option) => (
-                      <button
-                        className={`loading-option ${appearance.loadingVariant === option.id ? "is-active" : ""}`}
+                        className={`theme-card ${isActive ? "is-active" : ""}`}
                         type="button"
                         role="radio"
-                        aria-checked={appearance.loadingVariant === option.id}
+                        aria-checked={isActive}
+                        key={theme.id}
+                        onClick={() =>
+                          setAppearance((current) => ({
+                            ...current,
+                            theme: theme.id
+                          }))
+                        }
+                      >
+                        {/* Each card renders itself in its own palette (swatch
+                            colors), so differences survive any active theme. */}
+                        <span className="theme-card-preview" style={{ background: theme.swatch[0] }} aria-hidden="true">
+                          <span className="theme-card-mini" style={{ background: theme.swatch[1] }}>
+                            <span className="theme-card-mini-bar" style={{ background: theme.swatch[2] }} />
+                          </span>
+                        </span>
+                        <span className="theme-card-swatches" aria-hidden="true">
+                          {theme.swatch.map((color) => (
+                            <span key={color} style={{ background: color }} />
+                          ))}
+                        </span>
+                        <strong>{theme.name}</strong>
+                        <small>{theme.vibe}</small>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : settingsSection === "behavior" ? (
+              <section className="settings-card" aria-label="行为设置">
+                <div className="setting-row">
+                  <span>动效等级</span>
+                  <div className="behavior-options three" role="radiogroup" aria-label="动效等级">
+                    {MOTION_OPTIONS.map((option) => (
+                      <button
+                        className={`loading-option ${appearance.motion === option.id ? "is-active" : ""}`}
+                        type="button"
+                        role="radio"
+                        aria-checked={appearance.motion === option.id}
                         key={option.id}
                         onClick={() =>
                           setAppearance((current) => ({
                             ...current,
-                            loadingVariant: option.id
+                            motion: option.id
                           }))
                         }
                       >
-                        <span className={`loading-mark loading-${option.id}`} aria-hidden="true">
-                          <span />
-                        </span>
                         <strong>{option.label}</strong>
+                        <span>{option.hint}</span>
                       </button>
                     ))}
                   </div>
-                </section>
-              ) : settingsSection === "behavior" ? (
-                <section className="settings-card" aria-label="行为设置">
-                  <div className="setting-row">
-                    <span>关闭按钮</span>
-                    <div className="behavior-options" role="radiogroup" aria-label="关闭按钮行为">
-                      <button
-                        className={`loading-option ${closeBehavior === "quit" ? "is-active" : ""}`}
-                        type="button"
-                        role="radio"
-                        aria-checked={closeBehavior === "quit"}
-                        onClick={() => {
-                          setCloseBehavior("quit");
-                          void window.workbench?.setCloseBehavior?.("quit");
-                        }}
-                      >
-                        <strong>彻底退出</strong>
-                        <span>点 ✕ 直接关掉应用</span>
-                      </button>
-                      <button
-                        className={`loading-option ${closeBehavior === "tray" ? "is-active" : ""}`}
-                        type="button"
-                        role="radio"
-                        aria-checked={closeBehavior === "tray"}
-                        onClick={() => {
-                          setCloseBehavior("tray");
-                          void window.workbench?.setCloseBehavior?.("tray");
-                        }}
-                      >
-                        <strong>收起到系统托盘</strong>
-                        <span>点 ✕ 隐藏窗口，托盘图标保留</span>
-                      </button>
-                    </div>
+                </div>
+                <div className="setting-row">
+                  <span>关闭按钮</span>
+                  <div className="behavior-options" role="radiogroup" aria-label="关闭按钮行为">
+                    <button
+                      className={`loading-option ${closeBehavior === "quit" ? "is-active" : ""}`}
+                      type="button"
+                      role="radio"
+                      aria-checked={closeBehavior === "quit"}
+                      onClick={() => {
+                        setCloseBehavior("quit");
+                        void window.workbench?.setCloseBehavior?.("quit");
+                      }}
+                    >
+                      <strong>彻底退出</strong>
+                      <span>点 ✕ 直接关掉应用</span>
+                    </button>
+                    <button
+                      className={`loading-option ${closeBehavior === "tray" ? "is-active" : ""}`}
+                      type="button"
+                      role="radio"
+                      aria-checked={closeBehavior === "tray"}
+                      onClick={() => {
+                        setCloseBehavior("tray");
+                        void window.workbench?.setCloseBehavior?.("tray");
+                      }}
+                    >
+                      <strong>收起到系统托盘</strong>
+                      <span>点 ✕ 隐藏窗口，托盘图标保留</span>
+                    </button>
                   </div>
-                </section>
-              ) : settingsSection === "about" ? (
-                <section className="settings-card" aria-label="版本与更新">
+                </div>
+              </section>
+            ) : settingsSection === "about" ? (
+              <section className="settings-card" aria-label="版本与更新">
+                <div className="setting-row">
+                  <span>版本</span>
+                  <span className="version-label">
+                    {appInfo?.version || "—"}
+                    {updateState === "downloaded" ? (
+                      <button
+                        className="button-primary compact"
+                        type="button"
+                        onClick={() => window.workbench?.quitAndInstall?.()}
+                      >
+                        重启更新
+                      </button>
+                    ) : (
+                      <button
+                        className="button-secondary"
+                        type="button"
+                        onClick={() => {
+                          setUpdateState("checking");
+                          window.workbench?.checkForUpdates?.();
+                        }}
+                        disabled={updateState === "checking" || updateState === "downloading"}
+                      >
+                        {updateState === "checking" || updateState === "downloading" ? "检查中…" : "检查更新"}
+                      </button>
+                    )}
+                  </span>
+                </div>
+                {updateState === "downloading" && updateInfo?.percent != null ? (
                   <div className="setting-row">
-                    <span>版本</span>
-                    <span className="version-label">
-                      {appInfo?.version || "—"}
-                      {updateState === "downloaded" ? (
-                        <button
-                          className="button-primary compact"
-                          type="button"
-                          onClick={() => window.workbench?.quitAndInstall?.()}
-                        >
-                          重启更新
-                        </button>
-                      ) : (
-                        <button
-                          className="button-secondary"
-                          type="button"
-                          onClick={() => {
-                            setUpdateState("checking");
-                            window.workbench?.checkForUpdates?.();
-                          }}
-                          disabled={updateState === "checking" || updateState === "downloading"}
-                        >
-                          {updateState === "checking" || updateState === "downloading"
-                            ? "检查中…"
-                            : "检查更新"}
-                        </button>
-                      )}
-                    </span>
+                    <span>下载进度</span>
+                    <span>{Math.round(updateInfo.percent)}%</span>
                   </div>
-                  {updateState === "downloading" && updateInfo?.percent != null ? (
-                    <div className="setting-row">
-                      <span>下载进度</span>
-                      <span>{Math.round(updateInfo.percent)}%</span>
-                    </div>
-                  ) : null}
-                  {updateState === "error" && updateInfo?.message ? (
-                    <div className="setting-row">
-                      <span>更新出错</span>
-                      <span className="version-error">{updateInfo.message}</span>
-                    </div>
-                  ) : null}
-                </section>
-              ) : settingsSection === "record" ? (
-                <>
-                  <section className="settings-card" aria-label="发送预览">
-                    <div className="setting-row">
-                      <span>工作目录</span>
-                      <span>{activeConversation?.directory ?? "~"}</span>
-                    </div>
-                    <p className="muted">发送时会附带当前工作目录和待发送附件路径。</p>
-                  </section>
-                  <section className="settings-card" aria-label="会话状态">
-                    <ul className="status-list">
-                      <li>
-                        <span>本地 transcript</span>
-                        <strong>{activeConversation?.messages.length ?? 0} 条</strong>
-                      </li>
-                      <li>
-                        <span>附件记录</span>
-                        <strong>{activeConversation?.attachments.length ?? 0} 个</strong>
-                      </li>
-                      <li>
-                        <span>置顶</span>
-                        <strong>{activeConversation?.pinned ? "是" : "否"}</strong>
-                      </li>
-                    </ul>
-                  </section>
-                  <section className="settings-card" aria-label="终端 Claude Code">
-                    <div className="setting-row">
-                      <span>CLI 路径</span>
-                      <span>{appInfo?.claudeCommand ?? "浏览器预览模式"}</span>
-                    </div>
-                  </section>
-                </>
-              ) : null}
-            </div>
+                ) : null}
+                {updateState === "error" && updateInfo?.message ? (
+                  <div className="setting-row">
+                    <span>更新出错</span>
+                    <span className="version-error">{updateInfo.message}</span>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
           </div>
-        ) : null}
-      </section>
+      </div>
 
-      {dragging ? (
-        <div className="drop-overlay" aria-hidden="true">
-          <div>
-            <FilePlus2 />
-            <strong>松开以添加到当前会话</strong>
-            <span>文件会进入附件队列，发送时带上本地路径</span>
-          </div>
+      {toast ? (
+        <div className="toast" role="status">
+          {toast}
         </div>
       ) : null}
 
-      {toast ? <div className="toast">{toast}</div> : null}
-      {showNewConversationModal && engines.length > 0 ? (
+      {/* Always mounted once engines are known: the .is-open class drives
+          symmetric enter/exit motion (same pattern as the settings overlay),
+          so closing the picker animates instead of disappearing. */}
+      {engines.length > 0 ? (
         <NewConversationModal
+          open={showNewConversationModal}
           engines={engines}
           homeDir={appInfo?.homeDir}
-          onConfirm={(engine, sandbox, directory) =>
-            void confirmNewConversation(engine, sandbox, directory)
-          }
+          onConfirm={(engine, sandbox, directory, outputDir) => void confirmNewConversation(engine, sandbox, directory, outputDir)}
           onCancel={() => setShowNewConversationModal(false)}
+          onOutputDirPicked={() => setShowOutputDirNotice(true)}
         />
       ) : null}
+
+      {/* Output-directory explainer — shown right after the user picks an
+          output dir (modal or About panel), so the spawn-injection mechanism
+          and its costs are never a surprise. Always mounted for symmetric
+          open/close motion. */}
+      <div
+        className={`modal-overlay notice-overlay ${showOutputDirNotice ? "is-open" : ""}`}
+        aria-hidden={!showOutputDirNotice}
+      >
+        <div className="modal notice-modal" role="alertdialog" aria-label="输出目录说明">
+          <div className="modal-header">
+            <h3>输出目录已设置</h3>
+          </div>
+          <div className="modal-body">
+            <ul className="notice-list">
+              <li>CLI 启动时会自动发送一条指令，让 AI 把生成的文件保存到该目录。</li>
+              <li>这条指令是一条真实的 AI 消息，会产生一次 API 交互。</li>
+              <li>长对话后 AI 可能淡忘；修改输出目录或重进会话会重新告知。</li>
+            </ul>
+          </div>
+          <div className="modal-footer">
+            <button
+              className="button-primary"
+              type="button"
+              onClick={() => setShowOutputDirNotice(false)}
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      </div>
     </main>
   );
 }

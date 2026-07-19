@@ -1,5 +1,5 @@
 // Small visual indicator for which AI engine a conversation is running.
-// Shown in the sidebar conversation list and the workspace header.
+// Shown in the session panel list and the inline "关于此会话" region.
 import type { CSSProperties } from "react";
 
 type EngineKey = "claude" | "codex" | "opencode" | "kimi";
@@ -13,7 +13,7 @@ const ENGINE_META: Record<string, { abbr: string; label: string; color: string }
   claude: { abbr: "C", label: "Claude Code", color: "#D97757" },
   codex: { abbr: "X", label: "Codex CLI", color: "#10A37F" },
   opencode: { abbr: "O", label: "OpenCode", color: "#6366F1" },
-  kimi: { abbr: "K", label: "Kimi CLI", color: "#8B5CF6" }
+  kimi: { abbr: "K", label: "Kimi CLI", color: "#141414" }
 };
 
 export function EngineBadge({ engine, size = "sm" }: EngineBadgeProps) {
