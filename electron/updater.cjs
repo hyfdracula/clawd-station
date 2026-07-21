@@ -52,9 +52,32 @@ function setupAutoUpdater(getMainWindow) {
   autoUpdater.on("error", (error) => {
     checkingForUpdates = false;
     sendToRendererSafe(getMainWindow, "updater:error", {
-      message: error ? (error.message || error.toString()) : "Unknown update error"
+      message: friendlyUpdateError(error)
     });
   });
+}
+
+// Raw electron-updater errors are Chromium net codes — meaningless to users.
+// Map the common ones to plain-language explanations.
+function friendlyUpdateError(error) {
+  const raw = error ? error.message || error.toString() : "";
+  if (!raw) return "检查更新失败，请稍后重试";
+  if (/ERR_CERT|CERT_|certificate/i.test(raw)) {
+    return "无法安全连接 GitHub（证书校验失败）。通常是当前网络拦截了加密连接，换个网络或稍后再试";
+  }
+  if (/ERR_CONNECTION|ERR_TIMED_OUT|ERR_INTERNET|ETIMEDOUT|ECONNRESET|socket hang up/i.test(raw)) {
+    return "连不上 GitHub（网络超时或被重置）。稍后再试，或到 Releases 页面手动下载";
+  }
+  if (/404|not found/i.test(raw)) {
+    return "还没有找到可用的更新包。可能是新版本尚未发布到 Releases";
+  }
+  if (/403|rate limit/i.test(raw)) {
+    return "GitHub 访问频率超限，稍后再试";
+  }
+  if (/sha|checksum|signature|hash/i.test(raw)) {
+    return "更新包校验失败，已中止更新。请稍后再试";
+  }
+  return `检查更新失败：${raw.slice(0, 120)}`;
 }
 
 function sendToRendererSafe(getMainWindow, channel, payload) {
