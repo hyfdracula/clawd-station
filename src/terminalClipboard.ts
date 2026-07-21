@@ -9,6 +9,9 @@ export interface TerminalClipboardApi {
   readText: () => Promise<{ ok: boolean; text?: string; error?: string }>;
   /** Files copied in Explorer/Finder — parsed by the main process. */
   readFilePaths?: () => Promise<{ ok: boolean; paths?: string[]; error?: string }>;
+  /** Clipboard image (screenshot tools) persisted to a temp PNG by the main
+      process — resolves with its path, or "" when no image is present. */
+  readImagePath?: () => Promise<{ ok: boolean; path?: string; error?: string }>;
 }
 
 /** Quote a file path the way native terminals do when pasting/dropping files. */
@@ -56,11 +59,19 @@ export function handleTerminalClipboardShortcut(
 
   void (async () => {
     // Files first: a copied file in Explorer/Finder pastes as its path, like
-    // native terminals. Plain text is the fallback.
+    // native terminals. Then clipboard images (screenshots): saved to a temp
+    // PNG whose path gets pasted. Plain text is the final fallback.
     if (clipboard.readFilePaths) {
       const files = await clipboard.readFilePaths().catch(() => ({ ok: false as const, paths: [] as string[] }));
       if (files.ok && files.paths && files.paths.length > 0) {
         terminal.paste(files.paths.map(quotePathForShell).join(" "));
+        return;
+      }
+    }
+    if (clipboard.readImagePath) {
+      const image = await clipboard.readImagePath().catch(() => ({ ok: false as const, path: "" }));
+      if (image.ok && image.path) {
+        terminal.paste(quotePathForShell(image.path));
         return;
       }
     }

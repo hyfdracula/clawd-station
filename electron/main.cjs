@@ -1836,6 +1836,43 @@ ipcMain.handle("clipboard:read-file-paths", async () => {
   }
 });
 
+// Screenshot tools (WeChat Alt+A, Snipaste, Win+Shift+S) put raw image data on
+// the clipboard — no file, no path. To paste it into a shell the way native
+// terminals effectively do, we persist the image to a temp PNG and hand the
+// renderer its path.
+ipcMain.handle("clipboard:read-image", async () => {
+  try {
+    let png = null;
+    const pngBuffer = clipboard.readBuffer("image/png");
+    if (pngBuffer && pngBuffer.length > 0) {
+      png = pngBuffer;
+    } else {
+      const image = clipboard.readImage();
+      if (!image.isEmpty()) png = image.toPNG();
+    }
+    if (!png || png.length === 0) return { ok: true, path: "" };
+    const dir = path.join(app.getPath("temp"), "clawd-station");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `screenshot-${Date.now()}.png`);
+    fs.writeFileSync(file, png);
+    // Keep only the newest 20 pasted images.
+    try {
+      const entries = fs
+        .readdirSync(dir)
+        .filter((name) => name.startsWith("screenshot-") && name.endsWith(".png"))
+        .sort();
+      for (const stale of entries.slice(0, Math.max(0, entries.length - 20))) {
+        fs.unlinkSync(path.join(dir, stale));
+      }
+    } catch {
+      /* pruning is best-effort */
+    }
+    return { ok: true, path: file };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "读取剪贴板图片失败" };
+  }
+});
+
 ipcMain.handle("app:info", async () => ({
   storeDir,
   attachmentRoot,

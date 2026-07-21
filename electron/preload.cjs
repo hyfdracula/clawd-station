@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld("workbench", {
   onEngineInstallProgress: (callback) => subscribe("engines:install-progress", callback),
   clipboardWriteText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
   clipboardReadFilePaths: () => ipcRenderer.invoke("clipboard:read-file-paths"),
+  clipboardReadImage: () => ipcRenderer.invoke("clipboard:read-image"),
   // webUtils.getPathForFile is the supported way to turn a dropped File into
   // an absolute path (File.path is deprecated/removed in newer Electron).
   getPathForFile: (file) => {

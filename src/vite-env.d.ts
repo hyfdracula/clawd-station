@@ -214,6 +214,7 @@ interface Window {
     onOpenDirectory: (callback: (event: { directory: string }) => void) => () => void;
     clipboardWriteText: (text: string) => Promise<{ ok: boolean; error?: string }>;
     clipboardReadFilePaths: () => Promise<{ ok: boolean; paths?: string[]; error?: string }>;
+    clipboardReadImage: () => Promise<{ ok: boolean; path?: string; error?: string }>;
     getPathForFile: (file: File) => string;
   };
 }

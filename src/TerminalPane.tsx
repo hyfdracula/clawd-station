@@ -93,6 +93,10 @@ const TerminalView = memo(function TerminalView({
         readFilePaths: () => {
           if (wb?.clipboardReadFilePaths) return wb.clipboardReadFilePaths();
           return Promise.resolve({ ok: true, paths: [] });
+        },
+        readImagePath: () => {
+          if (wb?.clipboardReadImage) return wb.clipboardReadImage();
+          return Promise.resolve({ ok: true, path: "" });
         }
       })
     );
