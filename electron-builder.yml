@@ -30,7 +30,12 @@ win:
       arch: [x64]
     - target: portable
       arch: [x64]
-  artifactName: "${productName}-${version}-${arch}.${ext}"
+  # Note: GitHub's release UI converts spaces in uploaded asset names to
+  # dots (so "Clawd Station-0.5.1-x64.exe" becomes "Clawd.Station-...").
+  # The autoUpdater reads file names from latest.yml, so a name mismatch
+  # → 404. Keep artifactName space-free; productName is preserved for the
+  # app's display name (start menu, shortcut, etc.).
+  artifactName: "ClawdStation-Setup-${version}-${arch}.${ext}"
   # node-pty is rebuilt against the Electron ABI by `electron-builder install-app-deps`
   # in the postinstall hook.
 
@@ -45,7 +50,7 @@ nsis:
   deleteAppDataOnUninstall: false
 
 portable:
-  artifactName: "${productName}-${version}-portable.${ext}"
+  artifactName: "ClawdStation-${version}-portable.${ext}"
 
 mac:
   icon: build/icon.icns
