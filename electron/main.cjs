@@ -1809,6 +1809,33 @@ ipcMain.handle("clipboard:write-text", async (_event, text) => {
   }
 });
 
+// Files copied in Explorer/Finder live on the clipboard as a file list, not
+// as text — navigator.clipboard.readText() sees nothing. Native terminals
+// paste them as paths, so we parse the list here and let the renderer write
+// the paths into the PTY.
+ipcMain.handle("clipboard:read-file-paths", async () => {
+  try {
+    if (process.platform === "win32") {
+      // Explorer populates the registered format "FileNameW" (UTF-16LE,
+      // null-terminated) with the copied file list. (The numeric CF_HDROP
+      // format isn't reachable through Electron's name-based clipboard API.)
+      const buffer = clipboard.readBuffer("FileNameW");
+      if (!buffer || buffer.length < 4) return { ok: true, paths: [] };
+      const text = buffer.toString("utf16le");
+      const paths = text.split("\0").filter((entry) => entry.trim().length > 0);
+      return { ok: true, paths };
+    }
+    // macOS: public.file-url carries (the first) copied file as a file:// URL.
+    const url = clipboard.read("public.file-url");
+    if (!url) return { ok: true, paths: [] };
+    const pathFromUrl = decodeURIComponent(new URL(url).pathname);
+    return { ok: true, paths: [pathFromUrl] };
+  } catch {
+    // Clipboard simply holds no files (or an unknown format) — not an error.
+    return { ok: true, paths: [] };
+  }
+});
+
 ipcMain.handle("app:info", async () => ({
   storeDir,
   attachmentRoot,

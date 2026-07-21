@@ -7,6 +7,16 @@ export interface TerminalClipboardSurface {
 export interface TerminalClipboardApi {
   writeText: (text: string) => Promise<{ ok: boolean; error?: string }>;
   readText: () => Promise<{ ok: boolean; text?: string; error?: string }>;
+  /** Files copied in Explorer/Finder — parsed by the main process. */
+  readFilePaths?: () => Promise<{ ok: boolean; paths?: string[]; error?: string }>;
+}
+
+/** Quote a file path the way native terminals do when pasting/dropping files. */
+export function quotePathForShell(path: string): string {
+  // Bare unless it contains whitespace or characters cmd.exe/PowerShell treat
+  // specially — then wrap in double quotes (inner quotes are unlikely but get
+  // backslash-escaped, which both cmd and posix shells accept).
+  return /[\s&()^%!,;=+[\]{}'"]/.test(path) ? `"${path.replace(/"/g, '\\"')}"` : path;
 }
 
 type TerminalShortcutEvent = Pick<KeyboardEvent, "type" | "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">;
@@ -44,8 +54,18 @@ export function handleTerminalClipboardShortcut(
     return false;
   }
 
-  void clipboard.readText().then((result) => {
+  void (async () => {
+    // Files first: a copied file in Explorer/Finder pastes as its path, like
+    // native terminals. Plain text is the fallback.
+    if (clipboard.readFilePaths) {
+      const files = await clipboard.readFilePaths().catch(() => ({ ok: false as const, paths: [] as string[] }));
+      if (files.ok && files.paths && files.paths.length > 0) {
+        terminal.paste(files.paths.map(quotePathForShell).join(" "));
+        return;
+      }
+    }
+    const result = await clipboard.readText();
     if (result.ok && result.text) terminal.paste(result.text);
-  });
+  })();
   return false;
 }

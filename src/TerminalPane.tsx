@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { getTerminalRenderOptions } from "./terminalAppearance";
-import { handleTerminalClipboardShortcut } from "./terminalClipboard";
+import { handleTerminalClipboardShortcut, quotePathForShell } from "./terminalClipboard";
 import { installTerminalBlockArtSmoothing } from "./terminalBlockArt";
 import type { XtermTheme } from "./themes";
 
@@ -89,7 +89,11 @@ const TerminalView = memo(function TerminalView({
           navigator.clipboard
             .readText()
             .then((text) => ({ ok: true, text }))
-            .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Clipboard read failed" }))
+            .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Clipboard read failed" })),
+        readFilePaths: () => {
+          if (wb?.clipboardReadFilePaths) return wb.clipboardReadFilePaths();
+          return Promise.resolve({ ok: true, paths: [] });
+        }
       })
     );
 
@@ -217,7 +221,39 @@ const TerminalView = memo(function TerminalView({
     return () => window.clearTimeout(timer);
   }, [active, id]);
 
-  return <div className="terminal-pane" ref={containerRef} style={{ display: active ? "block" : "none" }} />;
+  return (
+    <div
+      className="terminal-pane"
+      ref={containerRef}
+      style={{ display: active ? "block" : "none" }}
+      onDragOver={(event) => {
+        // Allow file drops (and only file drops) into the terminal.
+        if (event.dataTransfer.types.includes("Files")) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={(event) => {
+        // Dropping files types their paths into the shell, like native
+        // terminals do. stopPropagation so the app-level guard below doesn't
+        // also fire (it only prevents navigation).
+        if (event.dataTransfer.files.length === 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const wb = window.workbench;
+        if (!wb) return;
+        const paths = [...event.dataTransfer.files]
+          .map((file) => {
+            const viaWebUtils = wb.getPathForFile?.(file) ?? "";
+            const legacy = (file as File & { path?: string }).path ?? "";
+            return viaWebUtils || legacy;
+          })
+          .filter((path) => path.length > 0)
+          .map(quotePathForShell);
+        if (paths.length > 0) wb.terminalWrite(id, paths.join(" "));
+      }}
+    />
+  );
 });
 
 // Keep at most this many PTYs alive; visiting a 7th conversation disposes the

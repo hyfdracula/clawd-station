@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 const listeners = new Map();
 
@@ -40,6 +40,16 @@ contextBridge.exposeInMainWorld("workbench", {
   installEngine: (engine) => ipcRenderer.invoke("engines:install", { engine }),
   onEngineInstallProgress: (callback) => subscribe("engines:install-progress", callback),
   clipboardWriteText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
+  clipboardReadFilePaths: () => ipcRenderer.invoke("clipboard:read-file-paths"),
+  // webUtils.getPathForFile is the supported way to turn a dropped File into
+  // an absolute path (File.path is deprecated/removed in newer Electron).
+  getPathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
   getAppInfo: () => ipcRenderer.invoke("app:info"),
   onConversationsChanged: (callback) => subscribe("conversations:changed", callback),
   onClaudeChunk: (callback) => subscribe("claude:chunk", callback),

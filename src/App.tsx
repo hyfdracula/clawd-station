@@ -703,7 +703,14 @@ export function App() {
         : "版本信息和更新检查。";
 
   return (
-    <main className={`shell ${panelCollapsed ? "is-collapsed" : ""}`}>
+    <main
+      className={`shell ${panelCollapsed ? "is-collapsed" : ""}`}
+      // Chromium's default for a dropped file is to navigate the window to
+      // it — suppress that everywhere. The terminal pane handles real file
+      // drops itself (types the path into the shell) and stops propagation.
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => event.preventDefault()}
+    >
       <aside className="card sidebar-card" aria-label="会话列表" ref={sidebarRef}>
         <div className="sidebar-top">
           <span className="brand-mark" title="Clawd Station">

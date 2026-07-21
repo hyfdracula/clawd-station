@@ -213,5 +213,7 @@ interface Window {
     notifyReady: () => void;
     onOpenDirectory: (callback: (event: { directory: string }) => void) => () => void;
     clipboardWriteText: (text: string) => Promise<{ ok: boolean; error?: string }>;
+    clipboardReadFilePaths: () => Promise<{ ok: boolean; paths?: string[]; error?: string }>;
+    getPathForFile: (file: File) => string;
   };
 }
