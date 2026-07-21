@@ -1,0 +1,95 @@
+name: verify-release
+
+# Auto-verifies every GitHub Release for this project. When a release is
+# published/edited/prereleased, this action checks that:
+#   1) latest.yml is reachable on the release (HTTP 200)
+#   2) Every file referenced in latest.yml (and the top-level path) is
+#      reachable
+#   3) The downloaded file's sha512 matches what latest.yml claims
+# If anything fails, the action exits with a clear error, so the broken
+# release shows up red in the Actions tab before users hit the broken
+# download. (Without this guard, electron-updater surfaces the failure
+# only as an opaque "下载失败" toast after the user's already clicked it.)
+on:
+  release:
+    types: [published, edited, prereleased]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify release assets
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 - <<'PY'
+          import sys, subprocess, hashlib, base64, urllib.request, os
+          repo = os.environ['REPO']
+          tag = os.environ['TAG']
+          base = f"https://github.com/{repo}/releases/download/{tag}"
+
+          # PyYAML is not pre-installed on ubuntu-latest runners.
+          try:
+              import yaml  # noqa: F401
+          except ImportError:
+              subprocess.check_call(
+                  [sys.executable, "-m", "pip", "install", "--quiet", "pyyaml"]
+              )
+              import yaml
+
+          # Pull latest.yml.
+          try:
+              with urllib.request.urlopen(f"{base}/latest.yml", timeout=30) as r:
+                  latest_yaml = r.read().decode()
+          except Exception as exc:
+              print(f"❌ cannot fetch latest.yml: {exc}")
+              sys.exit(1)
+
+          data = yaml.safe_load(latest_yaml) or {}
+          checks = []
+          if data.get("path") and data.get("sha512"):
+              checks.append((data["path"], data["sha512"]))
+          for ent in (data.get("files") or []):
+              if ent.get("url"):
+                  checks.append((ent["url"], ent.get("sha512", "")))
+
+          if not checks:
+              print("❌ latest.yml has no path or files entries")
+              sys.exit(1)
+
+          print(f"Verifying {len(checks)} entr{'y' if len(checks) == 1 else 'ies'} from latest.yml")
+
+          fail = 0
+          for rel, sha in checks:
+              url = f"{base}/{rel}"
+              try:
+                  with urllib.request.urlopen(url, timeout=120) as r:
+                      code = r.status
+                      blob = r.read()
+              except Exception as exc:
+                  print(f"❌ {rel}: {exc}")
+                  fail += 1
+                  continue
+              if code != 200:
+                  print(f"❌ {rel}: HTTP {code}")
+                  fail += 1
+                  continue
+              if sha:
+                  actual = base64.b64encode(hashlib.sha512(blob).digest()).decode()
+                  if actual != sha:
+                      print(f"❌ {rel}: sha512 mismatch")
+                      print(f"   expected: {sha}")
+                      print(f"   actual:   {actual}")
+                      fail += 1
+                      continue
+              print(f"✅ {rel}")
+
+          if fail:
+              print(f"\n❌ {fail} of {len(checks)} verification(s) failed")
+              sys.exit(1)
+          print(f"\n✅ all {len(checks)} verification(s) passed")
+          PY
