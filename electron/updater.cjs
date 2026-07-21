@@ -22,6 +22,10 @@ function setupAutoUpdater(getMainWindow) {
   });
 
   autoUpdater.on("update-available", (info) => {
+    // The CHECK is done once we know an update exists — the download is a
+    // separate phase. Leaving the flag set here used to swallow every later
+    // manual "检查更新" click.
+    checkingForUpdates = false;
     sendToRendererSafe(getMainWindow, "updater:available", {
       version: info.version,
       releaseDate: info.releaseDate
@@ -38,6 +42,7 @@ function setupAutoUpdater(getMainWindow) {
   });
 
   autoUpdater.on("update-downloaded", (info) => {
+    checkingForUpdates = false;
     sendToRendererSafe(getMainWindow, "updater:downloaded", {
       version: info.version,
       releaseDate: info.releaseDate
@@ -92,8 +97,14 @@ function sendToRendererSafe(getMainWindow, channel, payload) {
 function checkForUpdatesSilently() {
   if (checkingForUpdates) return;
   try {
-    autoUpdater.checkForUpdates().catch(() => {});
-  } catch {}
+    autoUpdater.checkForUpdates().catch(() => {
+      // The "error" event usually precedes the rejection, but stall-reject
+      // paths must not leave the flag stuck either.
+      checkingForUpdates = false;
+    });
+  } catch {
+    checkingForUpdates = false;
+  }
 }
 
 function quitAndInstall() {
